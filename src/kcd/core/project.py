@@ -82,3 +82,50 @@ def resolve(target: str | Path) -> Project:
 
 def _from_pro(pro: Path) -> Project:
     return Project(root=pro.parent, pro=pro, name=pro.stem)
+
+
+def resolve_or_active(target: str | Path | None) -> Project:
+    """Like `resolve`, but auto-derive from KiCad's active board if `target` is None.
+
+    For IPC commands the agent often has no project path — it just wants to
+    operate on whatever board KiCad is showing right now. This helper bridges
+    that: if `target` is missing, ask kipy which board is open and resolve
+    the project from its filename.
+
+    Raises:
+        FileNotFoundError: target was given but couldn't be resolved.
+        kcd.core.output.CommandError(code="project_required", ...) when target
+            is None and KiCad either isn't running or has 0/>1 boards open.
+    """
+    if target is not None and str(target).strip() != "":
+        return resolve(target)
+
+    # Lazy import to avoid top-level dep on adapters from core
+    from kcd.adapters.kipy_pcb import list_open_documents
+    from kcd.core.output import CommandError
+
+    try:
+        docs = list_open_documents()
+    except Exception as e:  # noqa: BLE001
+        # Wrap any kipy/IPC failure in CommandError so the envelope ladder
+        # surfaces a clean "project_required" rather than dumping an
+        # IpcUnavailable trace.
+        raise CommandError(
+            "project_required",
+            f"No --project given and KiCad isn't reachable to auto-detect: {e}",
+        ) from e
+
+    boards = [d for d in docs if d.get("kind") == "board" and d.get("path")]
+    if len(boards) == 0:
+        raise CommandError(
+            "project_required",
+            "No --project given and no board is open in KiCad. "
+            "Open a .kicad_pcb file or pass --project explicitly.",
+        )
+    if len(boards) > 1:
+        paths = ", ".join(b["path"] for b in boards)
+        raise CommandError(
+            "project_required",
+            f"No --project given and multiple boards open ({paths}); pass --project explicitly.",
+        )
+    return resolve(boards[0]["path"])

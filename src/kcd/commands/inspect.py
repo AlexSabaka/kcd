@@ -7,7 +7,7 @@ import typer
 from kcd.adapters import skip_sch
 from kcd.core.ipc import IpcUnavailable
 from kcd.core.output import run_command
-from kcd.core.project import resolve
+from kcd.core.project import resolve, resolve_or_active
 
 inspect_app = typer.Typer(help="Read-only inspection of schematic and PCB.")
 
@@ -28,12 +28,15 @@ def sch(
 
 @inspect_app.command("pcb")
 def pcb(
-    project: str = typer.Argument(...),
+    project: str = typer.Argument(
+        None,
+        help="Project path. Omit to auto-detect from the board open in KiCad.",
+    ),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """List all footprints on the PCB. Requires KiCad to be open with the .kicad_pcb file."""
     with run_command("inspect.pcb", json_) as r:
-        proj = resolve(project)
+        proj = resolve_or_active(project)
         from kcd.adapters import kipy_pcb
         r.data = {
             "project": proj.name,

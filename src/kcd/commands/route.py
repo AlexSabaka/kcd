@@ -9,7 +9,7 @@ import typer
 from kcd.adapters import freerouting
 from kcd.core import config as cfg_mod
 from kcd.core.output import CommandError, run_command
-from kcd.core.project import resolve
+from kcd.core.project import resolve, resolve_or_active
 from kcd.core.snapshot import SnapshotStore
 
 route_app = typer.Typer(help="Routing helpers — single tracks and FreeRouting handoff.")
@@ -17,7 +17,10 @@ route_app = typer.Typer(help="Routing helpers — single tracks and FreeRouting 
 
 @route_app.command("track")
 def track(
-    project: str = typer.Argument(...),
+    project: str = typer.Argument(
+        None,
+        help="Project path. Omit to auto-detect from the board open in KiCad.",
+    ),
     net: str = typer.Option(..., "--net"),
     start: str = typer.Option(..., "--from", help="Start point as `x,y` in mm"),
     end: str = typer.Option(..., "--to", help="End point as `x,y` in mm"),
@@ -29,7 +32,7 @@ def track(
     """Add a single straight track between two coordinates. Requires KiCad with PCB open."""
     with run_command("route.track", json_) as r:
         cfg = cfg_mod.load()
-        proj = resolve(project)
+        proj = resolve_or_active(project)
 
         try:
             sx, sy = (float(x) for x in start.split(","))

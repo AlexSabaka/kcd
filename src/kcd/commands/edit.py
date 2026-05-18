@@ -12,20 +12,28 @@ import typer
 from kcd.adapters import kicad_cli, skip_sch
 from kcd.core import config as cfg_mod
 from kcd.core.output import Result, run_command
-from kcd.core.project import Project, resolve
+from kcd.core.project import Project, resolve, resolve_or_active
 from kcd.core.snapshot import SnapshotStore
 
 edit_app = typer.Typer(help="Mutating operations. Auto-snapshot before, auto-render after.")
 
 
-def _pre_edit(project_arg: str, msg: str, no_snapshot: bool) -> tuple[Project, str | None]:
+def _pre_edit(
+    project_arg: str | None,
+    msg: str,
+    no_snapshot: bool,
+    auto: bool = False,
+) -> tuple[Project, str | None]:
     """Resolve project + take a pre-edit snapshot. Returns (project, snapshot ref or None).
+
+    `auto=True` lets the caller omit `project_arg` and have us derive the
+    active project from KiCad's open board (for IPC-only commands).
 
     Any exception (FileNotFoundError from resolve, subprocess errors from git)
     propagates so the surrounding `run_command` envelope-wraps it.
     """
     cfg = cfg_mod.load()
-    proj = resolve(project_arg)
+    proj = resolve_or_active(project_arg) if auto else resolve(project_arg)
     snap_ref: str | None = None
     if cfg.auto_snapshot and not no_snapshot:
         store = SnapshotStore(proj, dir_name=cfg.snapshot_dir_name)
@@ -134,7 +142,10 @@ def delete(
 
 @edit_app.command("move-fp")
 def move_fp(
-    project: str = typer.Argument(...),
+    project: str = typer.Argument(
+        None,
+        help="Project path. Omit to auto-detect from the board open in KiCad.",
+    ),
     ref: str = typer.Option(..., "--ref"),
     x: float = typer.Option(..., "--x", help="X position in mm"),
     y: float = typer.Option(..., "--y", help="Y position in mm"),
@@ -144,6 +155,8 @@ def move_fp(
 ) -> None:
     """Move a footprint on the PCB. Requires KiCad open with PCB editor."""
     with run_command("edit.move-fp", json_) as r:
-        _proj, r.snapshot_before = _pre_edit(project, f"move {ref} to {x},{y}mm", no_snapshot)
+        _proj, r.snapshot_before = _pre_edit(
+            project, f"move {ref} to {x},{y}mm", no_snapshot, auto=True
+        )
         from kcd.adapters import kipy_pcb
         r.data = {"updated": kipy_pcb.move_footprint(ref, x, y, rotation)}

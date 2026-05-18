@@ -11,7 +11,81 @@ from __future__ import annotations
 
 from typing import Any
 
-from kcd.core.ipc import IpcUnavailable, get_board
+from kcd.core.ipc import IpcUnavailable, connect, get_board
+
+
+def _layer_name(layer: Any) -> str:
+    """Return the canonical KiCad layer name (e.g. `"F.Cu"`) for a kipy enum value.
+
+    kipy 0.7.1 surfaces footprint/track `layer` as a `BoardLayer` proto enum
+    whose `str()` produces only the int value ("3" / "34") — useless for an
+    agent that thinks in named layers. Resolve through the proto enum's
+    `Name(int)` method to get e.g. `"BL_F_Cu"`, then strip the `BL_` prefix
+    and translate the proto's underscore separator back to KiCad's dot
+    notation: `BL_F_Cu` → `F.Cu`, `BL_B_SilkS` → `B.SilkS`.
+
+    Falls back to `str(layer)` if anything goes sideways — better to surface
+    a raw int than to crash mid-serialization.
+    """
+    try:
+        from kipy.proto.board.board_types_pb2 import BoardLayer  # type: ignore[import-untyped]
+        proto_name = BoardLayer.Name(int(layer))
+        if proto_name.startswith("BL_"):
+            return proto_name[3:].replace("_", ".")
+        return proto_name
+    except Exception:
+        return str(layer)
+
+
+def list_open_documents() -> list[dict[str, Any]]:
+    """Enumerate documents currently open in KiCad.
+
+    Returns one entry per (PCB | schematic | project) document. Agents use
+    this as the bootstrap step: "what is KiCad working on right now?" — so
+    subsequent commands can default `--project` from this answer instead of
+    requiring the path up front.
+
+    Raises:
+        IpcUnavailable: KiCad isn't reachable, or its API server is up but
+            doesn't handle GetOpenDocuments (e.g. only the project manager
+            is open, not an editor that owns documents).
+    """
+    from kipy.errors import ApiError  # type: ignore[import-untyped]
+    from kipy.proto.common.types import DocumentType  # type: ignore[import-untyped]
+
+    kicad = connect()
+    try:
+        boards = kicad.get_open_documents(DocumentType.DOCTYPE_PCB)
+        schematics = kicad.get_open_documents(DocumentType.DOCTYPE_SCHEMATIC)
+        projects = kicad.get_open_documents(DocumentType.DOCTYPE_PROJECT)
+    except ApiError as e:
+        # KiCad responded but doesn't handle this request — typical when only
+        # the project manager (or a non-editor kiface) is the listener.
+        raise IpcUnavailable(
+            "KiCad is running but no editor is exposing documents. "
+            "Open the .kicad_pcb or .kicad_sch file in its editor and retry. "
+            f"(Underlying: {e})"
+        ) from e
+
+    out: list[dict[str, Any]] = []
+    for board in boards:
+        out.append({"kind": "board", "path": board.board_filename})
+    for sch in schematics:
+        out.append(
+            {
+                "kind": "schematic",
+                "path": getattr(sch.sheet_path, "path_human_readable", "") or "",
+            }
+        )
+    for proj in projects:
+        out.append(
+            {
+                "kind": "project",
+                "name": proj.project.name,
+                "path": proj.project.path,
+            }
+        )
+    return out
 
 
 def list_footprints() -> list[dict[str, Any]]:
@@ -33,7 +107,7 @@ def list_footprints() -> list[dict[str, Any]]:
         except Exception:
             x_nm, y_nm = 0, 0
         try:
-            layer = str(fp.layer)
+            layer = _layer_name(fp.layer)
         except Exception:
             layer = ""
         try:
@@ -59,7 +133,7 @@ def list_tracks() -> list[dict[str, Any]]:
         try:
             out.append({
                 "net": _net_name(t),
-                "layer": str(t.layer),
+                "layer": _layer_name(t.layer),
                 "width_mm": _nm_to_mm(t.width),
                 "start": {"x_mm": _nm_to_mm(t.start.x), "y_mm": _nm_to_mm(t.start.y)},
                 "end": {"x_mm": _nm_to_mm(t.end.x), "y_mm": _nm_to_mm(t.end.y)},
@@ -186,7 +260,7 @@ def _footprint_to_dict(fp: Any) -> dict[str, Any]:
         "library_id": _safe(
             lambda: f"{fp.library_id.library_nickname}:{fp.library_id.entry_name}", ""
         ),
-        "layer": _safe(lambda: str(fp.layer), ""),
+        "layer": _safe(lambda: _layer_name(fp.layer), ""),
         "x_mm": _safe(lambda: _nm_to_mm(fp.position.x), 0.0),
         "y_mm": _safe(lambda: _nm_to_mm(fp.position.y), 0.0),
         "rotation_deg": _safe(lambda: float(fp.orientation.degrees), 0.0),

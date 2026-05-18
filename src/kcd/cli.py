@@ -13,6 +13,7 @@ from kcd.commands.edit import edit_app
 from kcd.commands.export import export_app
 from kcd.commands.inspect import inspect_app
 from kcd.commands.net import net_app
+from kcd.commands.project import project_app
 from kcd.commands.render import render_app
 from kcd.commands.route import route_app
 from kcd.commands.snapshot import snapshot_app
@@ -35,6 +36,7 @@ def version() -> None:
 
 
 # Mount subcommand groups
+app.add_typer(project_app, name="project")
 app.add_typer(snapshot_app, name="snapshot")
 app.add_typer(render_app, name="render")
 app.add_typer(inspect_app, name="inspect")

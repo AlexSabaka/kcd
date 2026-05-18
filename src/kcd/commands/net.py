@@ -6,7 +6,7 @@ import typer
 
 from kcd.adapters import skip_sch
 from kcd.core.output import run_command
-from kcd.core.project import resolve
+from kcd.core.project import resolve, resolve_or_active
 
 net_app = typer.Typer(help="Net tracing and connectivity queries.")
 
@@ -27,12 +27,15 @@ def list_nets(
 
 @net_app.command("pcb")
 def pcb_nets(
-    project: str = typer.Argument(...),
+    project: str = typer.Argument(
+        None,
+        help="Project path. Omit to auto-detect from the board open in KiCad.",
+    ),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """List nets present on the PCB (requires KiCad open with .kicad_pcb)."""
     with run_command("net.pcb", json_) as r:
-        proj = resolve(project)
+        proj = resolve_or_active(project)
         from kcd.adapters import kipy_pcb
         r.data = {
             "project": proj.name,

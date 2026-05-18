@@ -7,6 +7,7 @@ import subprocess
 import pytest
 
 from kcd.adapters import kicad_cli
+from kcd.adapters.kipy_pcb import _layer_name
 
 
 def test_run_propagates_timeout_as_cli_error(monkeypatch) -> None:
@@ -43,3 +44,17 @@ def test_run_passes_stdin_devnull(monkeypatch) -> None:
     kicad_cli._run("kicad-cli", "--version")
 
     assert captured.get("stdin") is subprocess.DEVNULL
+
+
+def test_layer_name_maps_kipy_ints_to_canonical_names() -> None:
+    """kipy 0.7.1 returns layer values as the proto BoardLayer enum (int-ish).
+    Agents need them as `F.Cu` / `B.Cu`, not `"3"` / `"34"`."""
+    assert _layer_name(3) == "F.Cu"
+    assert _layer_name(34) == "B.Cu"
+    assert _layer_name(39) == "B.SilkS"
+
+
+def test_layer_name_falls_back_on_unknown() -> None:
+    """Unrecognized ints must not crash — fall back to str()."""
+    assert _layer_name(999_999) == "999999"
+    assert _layer_name("garbage") == "garbage"

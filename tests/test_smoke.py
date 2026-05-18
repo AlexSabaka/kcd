@@ -27,7 +27,7 @@ def test_cli_help() -> None:
         capture_output=True, text=True,
     )
     assert result.returncode == 0
-    for sub in ("snapshot", "render", "inspect", "edit", "net", "drc", "erc", "export", "route"):
+    for sub in ("project", "snapshot", "render", "inspect", "edit", "net", "drc", "erc", "export", "route"):
         assert sub in result.stdout, f"subcommand {sub} missing from --help"
 
 
