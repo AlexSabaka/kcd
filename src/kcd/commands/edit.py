@@ -188,6 +188,10 @@ def move_fp(
             r.fail("ipc_unavailable", str(e))
         except LookupError as e:
             r.fail("not_found", str(e))
+        except Exception as e:
+            # ConnectionError on IPC timeout, kipy API drift, KiCad-side crashes,
+            # etc. — surface as a structured envelope, not a Python traceback.
+            r.fail("ipc_failed", f"{type(e).__name__}: {e}")
     except ImportError as e:
         r.fail("import_failed", str(e))
     emit(r, json_)
