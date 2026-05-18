@@ -20,10 +20,13 @@ def sch(
     """List all symbols in the schematic with reference, value, and footprint."""
     proj = resolve(project)
     r = Result(command="inspect.sch")
-    r.data = {
-        "project": proj.name,
-        "symbols": skip_sch.list_symbols(proj.sch),
-    }
+    try:
+        r.data = {
+            "project": proj.name,
+            "symbols": skip_sch.list_symbols(proj.sch),
+        }
+    except skip_sch.SchEditError as e:
+        r.fail("inspect_failed", str(e))
     emit(r, json_)
 
 
