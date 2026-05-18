@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kcd"
+version = "0.1.0"
+description = "Agentic KiCad harness for Claude Code and other MCP/CLI-driven AI tools"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "kcd contributors" }]
+requires-python = ">=3.11"
+keywords = ["kicad", "pcb", "schematic", "eda", "claude-code", "agentic", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Manufacturing",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.7",
+    "pydantic>=2.6",
+    "kicad-python>=0.5",
+    "kicad-skip>=0.2.5",
+]
+
+[project.optional-dependencies]
+freerouting = []
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+kcd = "kcd.cli:app"
+
+[project.urls]
+Repository = "https://github.com/YOUR-USERNAME/kcd"
+Issues = "https://github.com/YOUR-USERNAME/kcd/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kcd"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
