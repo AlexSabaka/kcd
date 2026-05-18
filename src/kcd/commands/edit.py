@@ -42,10 +42,10 @@ def _pre_edit(
     return proj, snap_ref
 
 
-def _post_edit_sch(proj: Project, result: Result) -> None:
+def _post_edit_sch(proj: Project, result: Result, no_render: bool = False) -> None:
     """Auto-render the schematic to the cache dir. Failures degrade to warnings."""
     cfg = cfg_mod.load()
-    if not cfg.auto_render:
+    if not cfg.auto_render or no_render:
         return
     cfg.render_cache_dir.mkdir(parents=True, exist_ok=True)
     out_dir = cfg.render_cache_dir
@@ -67,13 +67,14 @@ def value(
     ref: str = typer.Option(..., "--ref", help="Reference designator, e.g. R5"),
     new_value: str = typer.Option(..., "--value", help="New value, e.g. 10k"),
     no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Change a symbol's Value field in the schematic."""
     with run_command("edit.value", json_) as r:
         proj, r.snapshot_before = _pre_edit(project, f"edit value {ref}={new_value}", no_snapshot)
         r.data = {"updated": skip_sch.set_value(proj.sch, ref, new_value)}
-        _post_edit_sch(proj, r)
+        _post_edit_sch(proj, r, no_render=no_render)
 
 
 @edit_app.command("ref")
@@ -82,13 +83,14 @@ def ref_cmd(
     old: str = typer.Option(..., "--from", help="Current reference, e.g. R5"),
     new: str = typer.Option(..., "--to", help="New reference, e.g. R10"),
     no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Rename a symbol's reference designator."""
     with run_command("edit.ref", json_) as r:
         proj, r.snapshot_before = _pre_edit(project, f"rename {old} -> {new}", no_snapshot)
         r.data = {"updated": skip_sch.set_reference(proj.sch, old, new)}
-        _post_edit_sch(proj, r)
+        _post_edit_sch(proj, r, no_render=no_render)
 
 
 @edit_app.command("footprint")
@@ -97,13 +99,14 @@ def footprint(
     ref: str = typer.Option(..., "--ref"),
     fp: str = typer.Option(..., "--footprint", help="lib:fp, e.g. Resistor_SMD:R_0805_2012Metric"),
     no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Set a symbol's Footprint property."""
     with run_command("edit.footprint", json_) as r:
         proj, r.snapshot_before = _pre_edit(project, f"footprint {ref}={fp}", no_snapshot)
         r.data = {"updated": skip_sch.set_footprint(proj.sch, ref, fp)}
-        _post_edit_sch(proj, r)
+        _post_edit_sch(proj, r, no_render=no_render)
 
 
 @edit_app.command("prop")
@@ -113,13 +116,14 @@ def prop(
     field: str = typer.Option(..., "--field", help="Property name, e.g. MPN, Manufacturer"),
     value: str = typer.Option(..., "--value"),
     no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Set or create an arbitrary property on a symbol."""
     with run_command("edit.prop", json_) as r:
         proj, r.snapshot_before = _pre_edit(project, f"prop {ref}.{field}={value}", no_snapshot)
         r.data = {"updated": skip_sch.set_property(proj.sch, ref, field, value)}
-        _post_edit_sch(proj, r)
+        _post_edit_sch(proj, r, no_render=no_render)
 
 
 @edit_app.command("delete")
@@ -127,13 +131,14 @@ def delete(
     project: str = typer.Argument(...),
     ref: str = typer.Option(..., "--ref"),
     no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Delete a symbol from the schematic."""
     with run_command("edit.delete", json_) as r:
         proj, r.snapshot_before = _pre_edit(project, f"delete {ref}", no_snapshot)
         r.data = {"deleted": skip_sch.delete_symbol(proj.sch, ref)}
-        _post_edit_sch(proj, r)
+        _post_edit_sch(proj, r, no_render=no_render)
 
 
 # ---------------------------------------------------------------------------
