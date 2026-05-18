@@ -9,6 +9,7 @@ API reference: https://docs.kicad.org/kicad-python-main/board.html
 
 from __future__ import annotations
 
+from pathlib import Path as _Path
 from typing import Any
 
 from kcd.core.ipc import IpcUnavailable, connect, get_board
@@ -45,46 +46,74 @@ def list_open_documents() -> list[dict[str, Any]]:
     subsequent commands can default `--project` from this answer instead of
     requiring the path up front.
 
+    Each document type is probed independently — KiCad routes
+    GetOpenDocuments to the kiface that owns that type, so e.g. asking for
+    DOCTYPE_SCHEMATIC when only the PCB editor is loaded returns
+    `ApiError(no handler available)`. We treat that as "zero open" and move
+    on, so a single loaded editor still produces a useful answer.
+
     Raises:
-        IpcUnavailable: KiCad isn't reachable, or its API server is up but
-            doesn't handle GetOpenDocuments (e.g. only the project manager
-            is open, not an editor that owns documents).
+        IpcUnavailable: KiCad isn't reachable at all (kipy connect failed),
+            or *every* doc-type probe failed (likely only the project
+            manager is running, no editors at all).
     """
     from kipy.errors import ApiError  # type: ignore[import-untyped]
     from kipy.proto.common.types import DocumentType  # type: ignore[import-untyped]
 
     kicad = connect()
-    try:
-        boards = kicad.get_open_documents(DocumentType.DOCTYPE_PCB)
-        schematics = kicad.get_open_documents(DocumentType.DOCTYPE_SCHEMATIC)
-        projects = kicad.get_open_documents(DocumentType.DOCTYPE_PROJECT)
-    except ApiError as e:
-        # KiCad responded but doesn't handle this request — typical when only
-        # the project manager (or a non-editor kiface) is the listener.
+    out: list[dict[str, Any]] = []
+    last_api_error: ApiError | None = None
+    any_responded = False
+
+    probes: list[tuple[DocumentType.ValueType, str]] = [
+        (DocumentType.DOCTYPE_PCB, "board"),
+        (DocumentType.DOCTYPE_SCHEMATIC, "schematic"),
+        (DocumentType.DOCTYPE_PROJECT, "project"),
+    ]
+    for doc_type, kind in probes:
+        try:
+            docs = kicad.get_open_documents(doc_type)
+        except ApiError as e:
+            last_api_error = e
+            continue
+        any_responded = True
+        for d in docs:
+            if kind == "board":
+                # `board_filename` is the basename only (e.g. "foo.kicad_pcb").
+                # `project.path` is the project root dir — join them so the agent
+                # gets an absolute path that `resolve()` can consume directly.
+                project_dir = d.project.path if d.HasField("project") else ""
+                full_path = (
+                    str(_Path(project_dir) / d.board_filename)
+                    if project_dir
+                    else d.board_filename
+                )
+                out.append(
+                    {
+                        "kind": "board",
+                        "path": full_path,
+                        "filename": d.board_filename,
+                        "project_dir": project_dir,
+                    }
+                )
+            elif kind == "schematic":
+                out.append(
+                    {
+                        "kind": "schematic",
+                        "path": getattr(d.sheet_path, "path_human_readable", "") or "",
+                    }
+                )
+            else:
+                out.append(
+                    {"kind": "project", "name": d.project.name, "path": d.project.path}
+                )
+
+    if not any_responded and last_api_error is not None:
         raise IpcUnavailable(
             "KiCad is running but no editor is exposing documents. "
             "Open the .kicad_pcb or .kicad_sch file in its editor and retry. "
-            f"(Underlying: {e})"
-        ) from e
-
-    out: list[dict[str, Any]] = []
-    for board in boards:
-        out.append({"kind": "board", "path": board.board_filename})
-    for sch in schematics:
-        out.append(
-            {
-                "kind": "schematic",
-                "path": getattr(sch.sheet_path, "path_human_readable", "") or "",
-            }
-        )
-    for proj in projects:
-        out.append(
-            {
-                "kind": "project",
-                "name": proj.project.name,
-                "path": proj.project.path,
-            }
-        )
+            f"(Underlying: {last_api_error})"
+        ) from last_api_error
     return out
 
 
