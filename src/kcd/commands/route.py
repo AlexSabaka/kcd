@@ -8,8 +8,7 @@ import typer
 
 from kcd.adapters import freerouting
 from kcd.core import config as cfg_mod
-from kcd.core.ipc import IpcUnavailable
-from kcd.core.output import Result, emit
+from kcd.core.output import CommandError, run_command
 from kcd.core.project import resolve
 from kcd.core.snapshot import SnapshotStore
 
@@ -28,21 +27,24 @@ def track(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Add a single straight track between two coordinates. Requires KiCad with PCB open."""
-    cfg = cfg_mod.load()
-    proj = resolve(project)
+    with run_command("route.track", json_) as r:
+        cfg = cfg_mod.load()
+        proj = resolve(project)
 
-    sx, sy = (float(x) for x in start.split(","))
-    ex, ey = (float(x) for x in end.split(","))
+        try:
+            sx, sy = (float(x) for x in start.split(","))
+            ex, ey = (float(x) for x in end.split(","))
+        except ValueError as e:
+            raise CommandError(
+                "invalid_coord",
+                f"--from/--to must be 'x,y' in mm; got {start!r} / {end!r}: {e}",
+            ) from e
 
-    snap_ref: str | None = None
-    if cfg.auto_snapshot and not no_snapshot:
-        store = SnapshotStore(proj, dir_name=cfg.snapshot_dir_name)
-        info = store.create(f"before: route track {net} {start}->{end}")
-        snap_ref = info.ref
+        if cfg.auto_snapshot and not no_snapshot:
+            store = SnapshotStore(proj, dir_name=cfg.snapshot_dir_name)
+            info = store.create(f"before: route track {net} {start}->{end}")
+            r.snapshot_before = info.ref
 
-    r = Result(command="route.track")
-    r.snapshot_before = snap_ref
-    try:
         from kcd.adapters import kipy_pcb
         r.data = {"track": kipy_pcb.add_track(
             net_name=net,
@@ -51,13 +53,6 @@ def track(
             layer=layer,
             width_mm=width,
         )}
-    except IpcUnavailable as e:
-        r.fail("ipc_unavailable", str(e))
-    except LookupError as e:
-        r.fail("not_found", str(e))
-    except Exception as e:
-        r.fail("route_failed", f"{type(e).__name__}: {e}")
-    emit(r, json_)
 
 
 @route_app.command("freeroute")
@@ -81,55 +76,48 @@ def freeroute(
         2. `kcd route freeroute <project> --dsn <name>.dsn`
         3. In KiCad PCB editor: File → Import → Specctra Session → select <name>.ses
     """
-    cfg = cfg_mod.load()
-    proj = resolve(project)
-    r = Result(command="route.freeroute")
+    with run_command("route.freeroute", json_) as r:
+        cfg = cfg_mod.load()
+        proj = resolve(project)
 
-    if not cfg.freerouting_jar:
-        r.fail(
-            "no_jar",
-            "FreeRouting JAR not configured. Set KCD_FREEROUTING_JAR env var to the JAR path. "
-            "Download from https://github.com/freerouting/freerouting/releases",
-        )
-        emit(r, json_)
-        return
-
-    if dsn is None:
-        dsn = proj.root / f"{proj.name}.dsn"
-        if not dsn.exists():
-            r.fail(
-                "no_dsn",
-                f"No --dsn provided and {dsn} not found. "
-                "Export from KiCad: File → Export → Specctra DSN.",
+        if not cfg.freerouting_jar:
+            raise CommandError(
+                "no_jar",
+                "FreeRouting JAR not configured. Set KCD_FREEROUTING_JAR env var to the JAR path. "
+                "Download from https://github.com/freerouting/freerouting/releases",
             )
-            emit(r, json_)
-            return
 
-    if out_ses is None:
-        out_ses = proj.root / f"{proj.name}.ses"
+        if dsn is None:
+            dsn = proj.root / f"{proj.name}.dsn"
+            if not dsn.exists():
+                raise CommandError(
+                    "no_dsn",
+                    f"No --dsn provided and {dsn} not found. "
+                    "Export from KiCad: File → Export → Specctra DSN.",
+                )
 
-    try:
-        result = freerouting.autoroute(
-            jar_path=cfg.freerouting_jar,
-            dsn_path=dsn,
-            out_ses=out_ses,
-            optimization_passes=opt_passes,
-            routing_passes=passes,
-            timeout_seconds=timeout,
+        if out_ses is None:
+            out_ses = proj.root / f"{proj.name}.ses"
+
+        try:
+            result = freerouting.autoroute(
+                jar_path=cfg.freerouting_jar,
+                dsn_path=dsn,
+                out_ses=out_ses,
+                optimization_passes=opt_passes,
+                routing_passes=passes,
+                timeout_seconds=timeout,
+            )
+        except freerouting.FreeroutingError as e:
+            raise CommandError("freeroute_failed", str(e)) from e
+
+        r.add_artifact("specctra_session", str(result.ses))
+        r.data = {
+            "dsn": str(result.dsn),
+            "ses": str(result.ses),
+            "routing_passes": result.passes,
+        }
+        r.warn(
+            "Open KiCad's PCB editor and run File → Import → Specctra Session "
+            f"to apply the routed result from {result.ses}."
         )
-    except freerouting.FreeroutingError as e:
-        r.fail("freeroute_failed", str(e))
-        emit(r, json_)
-        return
-
-    r.add_artifact("specctra_session", str(result.ses))
-    r.data = {
-        "dsn": str(result.dsn),
-        "ses": str(result.ses),
-        "routing_passes": result.passes,
-    }
-    r.warn(
-        "Open KiCad's PCB editor and run File → Import → Specctra Session "
-        f"to apply the routed result from {result.ses}."
-    )
-    emit(r, json_)

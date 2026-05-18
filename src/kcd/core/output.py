@@ -2,12 +2,19 @@
 
 Every command returns a `Result` and emits it through `emit(result, json_mode)`.
 JSON mode produces machine-parseable output; pretty mode uses Rich.
+
+For the command layer, the `run_command` context manager wraps body execution
+in a uniform exception ladder so no command can leak a Python traceback to the
+JSON envelope. Commands raise `CommandError(code, message)` for expected
+failures; anything else is caught generically with `code="unexpected"`.
 """
 
 from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -73,6 +80,63 @@ def emit(result: Result, json_mode: bool) -> None:
         _pretty(result)
     if not result.ok:
         sys.exit(1)
+
+
+class CommandError(Exception):
+    """Raised inside a `run_command` block to fail with a structured envelope.
+
+    Prefer this over `r.fail(...)` + early return inside command bodies — it
+    plays cleanly with the context manager's exit path and lets the caller
+    centralize the emit.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(f"{code}: {message}")
+
+
+@contextmanager
+def run_command(name: str, json_mode: bool) -> Iterator[Result]:
+    """Wrap a command body so no exception escapes as a raw traceback.
+
+    Usage::
+
+        @app.command("sch")
+        def sch(project: str, json_: bool = typer.Option(False, "--json")):
+            with run_command("inspect.sch", json_) as r:
+                proj = resolve(project)
+                r.data = {"symbols": skip_sch.list_symbols(proj.sch)}
+
+    Any exception raised inside the `with` block is mapped to a `Result.fail()`
+    call and the result is emitted at exit. Recognized exception types map to
+    stable error codes; unknown exceptions become `code="unexpected"` with the
+    type name preserved in the message.
+    """
+    # Lazy imports — adapter exception types live outside `core/`, and we want
+    # to keep `output.py` importable without pulling adapters at module load.
+    from kcd.adapters.kicad_cli import CliError
+    from kcd.adapters.skip_sch import SchEditError
+    from kcd.core.ipc import IpcUnavailable
+
+    r = Result(command=name)
+    try:
+        yield r
+    except CommandError as e:
+        r.fail(e.code, e.message)
+    except FileNotFoundError as e:
+        r.fail("not_found", str(e))
+    except IpcUnavailable as e:
+        r.fail("ipc_unavailable", str(e))
+    except SchEditError as e:
+        r.fail("edit_failed", str(e))
+    except CliError as e:
+        r.fail("cli_failed", str(e))
+    except LookupError as e:
+        r.fail("not_found", str(e))
+    except Exception as e:  # noqa: BLE001
+        r.fail("unexpected", f"{type(e).__name__}: {e}")
+    emit(r, json_mode)
 
 
 def _pretty(result: Result) -> None:

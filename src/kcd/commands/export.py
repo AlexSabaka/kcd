@@ -8,7 +8,7 @@ import typer
 
 from kcd.adapters import kicad_cli
 from kcd.core import config as cfg_mod
-from kcd.core.output import Result, emit
+from kcd.core.output import CommandError, run_command
 from kcd.core.project import resolve
 
 export_app = typer.Typer(help="Manufacturing file exports.")
@@ -21,18 +21,12 @@ def gerber(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Export Gerber files."""
-    cfg = cfg_mod.load()
-    proj = resolve(project)
-    r = Result(command="export.gerber")
-    try:
+    with run_command("export.gerber", json_) as r:
+        cfg = cfg_mod.load()
+        proj = resolve(project)
         kicad_cli.export_gerber(cfg.kicad_cli, proj.pcb, out)
-    except kicad_cli.CliError as e:
-        r.fail("export_failed", str(e))
-        emit(r, json_)
-        return
-    r.add_artifact("gerber_dir", str(out))
-    r.data = {"project": proj.name, "out_dir": str(out)}
-    emit(r, json_)
+        r.add_artifact("gerber_dir", str(out))
+        r.data = {"project": proj.name, "out_dir": str(out)}
 
 
 @export_app.command("drill")
@@ -42,18 +36,12 @@ def drill(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Export drill files."""
-    cfg = cfg_mod.load()
-    proj = resolve(project)
-    r = Result(command="export.drill")
-    try:
+    with run_command("export.drill", json_) as r:
+        cfg = cfg_mod.load()
+        proj = resolve(project)
         kicad_cli.export_drill(cfg.kicad_cli, proj.pcb, out)
-    except kicad_cli.CliError as e:
-        r.fail("export_failed", str(e))
-        emit(r, json_)
-        return
-    r.add_artifact("drill_dir", str(out))
-    r.data = {"project": proj.name, "out_dir": str(out)}
-    emit(r, json_)
+        r.add_artifact("drill_dir", str(out))
+        r.data = {"project": proj.name, "out_dir": str(out)}
 
 
 @export_app.command("bom")
@@ -64,18 +52,12 @@ def bom(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Export BOM as CSV."""
-    cfg = cfg_mod.load()
-    proj = resolve(project)
-    r = Result(command="export.bom")
-    try:
+    with run_command("export.bom", json_) as r:
+        cfg = cfg_mod.load()
+        proj = resolve(project)
         kicad_cli.export_sch_bom(cfg.kicad_cli, proj.sch, out, grouped=grouped)
-    except kicad_cli.CliError as e:
-        r.fail("export_failed", str(e))
-        emit(r, json_)
-        return
-    r.add_artifact("bom_csv", str(out), grouped=grouped)
-    r.data = {"project": proj.name}
-    emit(r, json_)
+        r.add_artifact("bom_csv", str(out), grouped=grouped)
+        r.data = {"project": proj.name}
 
 
 @export_app.command("step")
@@ -85,18 +67,12 @@ def step(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Export 3D STEP model of the board."""
-    cfg = cfg_mod.load()
-    proj = resolve(project)
-    r = Result(command="export.step")
-    try:
+    with run_command("export.step", json_) as r:
+        cfg = cfg_mod.load()
+        proj = resolve(project)
         kicad_cli.export_step(cfg.kicad_cli, proj.pcb, out)
-    except kicad_cli.CliError as e:
-        r.fail("export_failed", str(e))
-        emit(r, json_)
-        return
-    r.add_artifact("step", str(out))
-    r.data = {"project": proj.name}
-    emit(r, json_)
+        r.add_artifact("step", str(out))
+        r.data = {"project": proj.name}
 
 
 @export_app.command("pos")
@@ -106,18 +82,12 @@ def pos(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Export pick-and-place position file."""
-    cfg = cfg_mod.load()
-    proj = resolve(project)
-    r = Result(command="export.pos")
-    try:
+    with run_command("export.pos", json_) as r:
+        cfg = cfg_mod.load()
+        proj = resolve(project)
         kicad_cli.export_pos(cfg.kicad_cli, proj.pcb, out)
-    except kicad_cli.CliError as e:
-        r.fail("export_failed", str(e))
-        emit(r, json_)
-        return
-    r.add_artifact("pos", str(out))
-    r.data = {"project": proj.name}
-    emit(r, json_)
+        r.add_artifact("pos", str(out))
+        r.data = {"project": proj.name}
 
 
 @export_app.command("pdf")
@@ -128,19 +98,15 @@ def pdf(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Export schematic or PCB as PDF."""
-    cfg = cfg_mod.load()
-    proj = resolve(project)
-    r = Result(command="export.pdf")
-    try:
+    with run_command("export.pdf", json_) as r:
+        cfg = cfg_mod.load()
+        proj = resolve(project)
         if target == "sch":
             kicad_cli.export_sch_pdf(cfg.kicad_cli, proj.sch, out)
             r.add_artifact("sch_pdf", str(out))
-        else:
+        elif target == "pcb":
             kicad_cli.export_pcb_pdf(cfg.kicad_cli, proj.pcb, out)
             r.add_artifact("pcb_pdf", str(out))
-    except kicad_cli.CliError as e:
-        r.fail("export_failed", str(e))
-        emit(r, json_)
-        return
-    r.data = {"project": proj.name, "target": target}
-    emit(r, json_)
+        else:
+            raise CommandError("invalid_target", f"target must be 'sch' or 'pcb', got {target!r}")
+        r.data = {"project": proj.name, "target": target}

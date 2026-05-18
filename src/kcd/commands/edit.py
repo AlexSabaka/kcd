@@ -2,18 +2,16 @@
 
 All edits auto-snapshot before mutating (unless --no-snapshot) and auto-render
 after (unless --no-render). The render output lands at:
-    <render_cache_dir>/last-edit.<format>
+    <render_cache_dir>/<sheet>.svg
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import typer
 
 from kcd.adapters import kicad_cli, skip_sch
 from kcd.core import config as cfg_mod
-from kcd.core.output import Result, emit
+from kcd.core.output import Result, run_command
 from kcd.core.project import Project, resolve
 from kcd.core.snapshot import SnapshotStore
 
@@ -21,7 +19,11 @@ edit_app = typer.Typer(help="Mutating operations. Auto-snapshot before, auto-ren
 
 
 def _pre_edit(project_arg: str, msg: str, no_snapshot: bool) -> tuple[Project, str | None]:
-    """Resolve project + snapshot. Returns (project, snapshot_ref or None)."""
+    """Resolve project + take a pre-edit snapshot. Returns (project, snapshot ref or None).
+
+    Any exception (FileNotFoundError from resolve, subprocess errors from git)
+    propagates so the surrounding `run_command` envelope-wraps it.
+    """
     cfg = cfg_mod.load()
     proj = resolve(project_arg)
     snap_ref: str | None = None
@@ -33,7 +35,7 @@ def _pre_edit(project_arg: str, msg: str, no_snapshot: bool) -> tuple[Project, s
 
 
 def _post_edit_sch(proj: Project, result: Result) -> None:
-    """Auto-render the schematic to the cache dir."""
+    """Auto-render the schematic to the cache dir. Failures degrade to warnings."""
     cfg = cfg_mod.load()
     if not cfg.auto_render:
         return
@@ -60,17 +62,10 @@ def value(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Change a symbol's Value field in the schematic."""
-    proj, snap = _pre_edit(project, f"edit value {ref}={new_value}", no_snapshot)
-    r = Result(command="edit.value")
-    r.snapshot_before = snap
-    try:
+    with run_command("edit.value", json_) as r:
+        proj, r.snapshot_before = _pre_edit(project, f"edit value {ref}={new_value}", no_snapshot)
         r.data = {"updated": skip_sch.set_value(proj.sch, ref, new_value)}
-    except skip_sch.SchEditError as e:
-        r.fail("edit_failed", str(e))
-        emit(r, json_)
-        return
-    _post_edit_sch(proj, r)
-    emit(r, json_)
+        _post_edit_sch(proj, r)
 
 
 @edit_app.command("ref")
@@ -82,17 +77,10 @@ def ref_cmd(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Rename a symbol's reference designator."""
-    proj, snap = _pre_edit(project, f"rename {old} -> {new}", no_snapshot)
-    r = Result(command="edit.ref")
-    r.snapshot_before = snap
-    try:
+    with run_command("edit.ref", json_) as r:
+        proj, r.snapshot_before = _pre_edit(project, f"rename {old} -> {new}", no_snapshot)
         r.data = {"updated": skip_sch.set_reference(proj.sch, old, new)}
-    except skip_sch.SchEditError as e:
-        r.fail("edit_failed", str(e))
-        emit(r, json_)
-        return
-    _post_edit_sch(proj, r)
-    emit(r, json_)
+        _post_edit_sch(proj, r)
 
 
 @edit_app.command("footprint")
@@ -104,17 +92,10 @@ def footprint(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Set a symbol's Footprint property."""
-    proj, snap = _pre_edit(project, f"footprint {ref}={fp}", no_snapshot)
-    r = Result(command="edit.footprint")
-    r.snapshot_before = snap
-    try:
+    with run_command("edit.footprint", json_) as r:
+        proj, r.snapshot_before = _pre_edit(project, f"footprint {ref}={fp}", no_snapshot)
         r.data = {"updated": skip_sch.set_footprint(proj.sch, ref, fp)}
-    except skip_sch.SchEditError as e:
-        r.fail("edit_failed", str(e))
-        emit(r, json_)
-        return
-    _post_edit_sch(proj, r)
-    emit(r, json_)
+        _post_edit_sch(proj, r)
 
 
 @edit_app.command("prop")
@@ -127,17 +108,10 @@ def prop(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Set or create an arbitrary property on a symbol."""
-    proj, snap = _pre_edit(project, f"prop {ref}.{field}={value}", no_snapshot)
-    r = Result(command="edit.prop")
-    r.snapshot_before = snap
-    try:
+    with run_command("edit.prop", json_) as r:
+        proj, r.snapshot_before = _pre_edit(project, f"prop {ref}.{field}={value}", no_snapshot)
         r.data = {"updated": skip_sch.set_property(proj.sch, ref, field, value)}
-    except skip_sch.SchEditError as e:
-        r.fail("edit_failed", str(e))
-        emit(r, json_)
-        return
-    _post_edit_sch(proj, r)
-    emit(r, json_)
+        _post_edit_sch(proj, r)
 
 
 @edit_app.command("delete")
@@ -148,17 +122,10 @@ def delete(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Delete a symbol from the schematic."""
-    proj, snap = _pre_edit(project, f"delete {ref}", no_snapshot)
-    r = Result(command="edit.delete")
-    r.snapshot_before = snap
-    try:
+    with run_command("edit.delete", json_) as r:
+        proj, r.snapshot_before = _pre_edit(project, f"delete {ref}", no_snapshot)
         r.data = {"deleted": skip_sch.delete_symbol(proj.sch, ref)}
-    except skip_sch.SchEditError as e:
-        r.fail("edit_failed", str(e))
-        emit(r, json_)
-        return
-    _post_edit_sch(proj, r)
-    emit(r, json_)
+        _post_edit_sch(proj, r)
 
 
 # ---------------------------------------------------------------------------
@@ -176,22 +143,7 @@ def move_fp(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Move a footprint on the PCB. Requires KiCad open with PCB editor."""
-    proj, snap = _pre_edit(project, f"move {ref} to {x},{y}mm", no_snapshot)
-    r = Result(command="edit.move-fp")
-    r.snapshot_before = snap
-    try:
+    with run_command("edit.move-fp", json_) as r:
+        _proj, r.snapshot_before = _pre_edit(project, f"move {ref} to {x},{y}mm", no_snapshot)
         from kcd.adapters import kipy_pcb
-        from kcd.core.ipc import IpcUnavailable
-        try:
-            r.data = {"updated": kipy_pcb.move_footprint(ref, x, y, rotation)}
-        except IpcUnavailable as e:
-            r.fail("ipc_unavailable", str(e))
-        except LookupError as e:
-            r.fail("not_found", str(e))
-        except Exception as e:
-            # ConnectionError on IPC timeout, kipy API drift, KiCad-side crashes,
-            # etc. — surface as a structured envelope, not a Python traceback.
-            r.fail("ipc_failed", f"{type(e).__name__}: {e}")
-    except ImportError as e:
-        r.fail("import_failed", str(e))
-    emit(r, json_)
+        r.data = {"updated": kipy_pcb.move_footprint(ref, x, y, rotation)}

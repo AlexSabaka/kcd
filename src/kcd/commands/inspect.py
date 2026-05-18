@@ -6,7 +6,7 @@ import typer
 
 from kcd.adapters import skip_sch
 from kcd.core.ipc import IpcUnavailable
-from kcd.core.output import Result, emit
+from kcd.core.output import run_command
 from kcd.core.project import resolve
 
 inspect_app = typer.Typer(help="Read-only inspection of schematic and PCB.")
@@ -18,16 +18,12 @@ def sch(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """List all symbols in the schematic with reference, value, and footprint."""
-    proj = resolve(project)
-    r = Result(command="inspect.sch")
-    try:
+    with run_command("inspect.sch", json_) as r:
+        proj = resolve(project)
         r.data = {
             "project": proj.name,
             "symbols": skip_sch.list_symbols(proj.sch),
         }
-    except skip_sch.SchEditError as e:
-        r.fail("inspect_failed", str(e))
-    emit(r, json_)
 
 
 @inspect_app.command("pcb")
@@ -36,17 +32,13 @@ def pcb(
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """List all footprints on the PCB. Requires KiCad to be open with the .kicad_pcb file."""
-    proj = resolve(project)
-    r = Result(command="inspect.pcb")
-    try:
+    with run_command("inspect.pcb", json_) as r:
+        proj = resolve(project)
         from kcd.adapters import kipy_pcb
         r.data = {
             "project": proj.name,
             "footprints": kipy_pcb.list_footprints(),
         }
-    except IpcUnavailable as e:
-        r.fail("ipc_unavailable", str(e))
-    emit(r, json_)
 
 
 @inspect_app.command("ref")
@@ -57,31 +49,23 @@ def ref(
 ) -> None:
     """Look up a component by reference designator. Reads from schematic;
     enriches with PCB info if KiCad is open."""
-    proj = resolve(project)
-    r = Result(command="inspect.ref")
-    try:
+    with run_command("inspect.ref", json_) as r:
+        proj = resolve(project)
         sch_info = skip_sch.find_symbol(proj.sch, reference)
-    except skip_sch.SchEditError as e:
-        r.fail("not_found", str(e))
-        emit(r, json_)
-        return
+        payload: dict = {"reference": reference, "schematic": sch_info, "pcb": None}
 
-    payload: dict = {"reference": reference, "schematic": sch_info}
-
-    # Try to enrich with live PCB info, but degrade gracefully.
-    try:
-        from kcd.adapters import kipy_pcb
+        # Try to enrich with live PCB info, but degrade gracefully — IPC being
+        # down is not a failure of this command, just a partial result.
         try:
-            payload["pcb"] = kipy_pcb.find_footprint(reference)
-        except LookupError:
-            payload["pcb"] = None
-            r.warn(f"No footprint named {reference!r} on the PCB (yet?)")
-    except IpcUnavailable:
-        payload["pcb"] = None
-        r.warn(
-            "KiCad not running with PCB open; PCB info unavailable. "
-            "Open the .kicad_pcb file to enrich this query."
-        )
+            from kcd.adapters import kipy_pcb
+            try:
+                payload["pcb"] = kipy_pcb.find_footprint(reference)
+            except LookupError:
+                r.warn(f"No footprint named {reference!r} on the PCB (yet?)")
+        except IpcUnavailable:
+            r.warn(
+                "KiCad not running with PCB open; PCB info unavailable. "
+                "Open the .kicad_pcb file to enrich this query."
+            )
 
-    r.data = payload
-    emit(r, json_)
+        r.data = payload
