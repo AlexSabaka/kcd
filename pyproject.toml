@@ -43,8 +43,8 @@ dev = [
 kcd = "kcd.cli:app"
 
 [project.urls]
-Repository = "https://github.com/YOUR-USERNAME/kcd"
-Issues = "https://github.com/YOUR-USERNAME/kcd/issues"
+Repository = "https://github.com/AlexSabaka/kcd"
+Issues = "https://github.com/AlexSabaka/kcd/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kcd"]
