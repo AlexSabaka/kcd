@@ -38,7 +38,7 @@ def list_symbols(sch_path: Path) -> list[dict[str, Any]]:
             "reference": _prop(sym, "Reference"),
             "value": _prop(sym, "Value"),
             "footprint": _prop(sym, "Footprint"),
-            "lib_id": getattr(sym, "lib_id", None) and str(sym.lib_id.value),
+            "lib_id": _lib_id(sym),
             "datasheet": _prop(sym, "Datasheet"),
         })
     return out
@@ -162,5 +162,15 @@ def _symbol_to_dict(sym: Any) -> dict[str, Any]:
         "value": _prop(sym, "Value"),
         "footprint": _prop(sym, "Footprint"),
         "datasheet": _prop(sym, "Datasheet"),
-        "lib_id": getattr(sym, "lib_id", None) and str(sym.lib_id.value),
+        "lib_id": _lib_id(sym),
     }
+
+
+def _lib_id(sym: Any) -> str | None:
+    # kicad-skip's lib_id attribute overrides __bool__ to return a str, which
+    # breaks `getattr(...) and ...` short-circuits. Read it through try/except
+    # so a missing/odd lib_id degrades to None instead of raising TypeError.
+    try:
+        return str(sym.lib_id.value)
+    except (AttributeError, TypeError):
+        return None
