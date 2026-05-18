@@ -43,7 +43,16 @@ def resolve(target: str | Path) -> Project:
 
     Raises FileNotFoundError if no `.kicad_pro` can be found.
     """
-    p = Path(target).expanduser().resolve()
+    raw = str(target)
+    p = Path(raw).expanduser()
+    # `Path.expanduser()` consults `$HOME`. Some subprocess envs (e.g. the MCP
+    # shim's child process) don't propagate $HOME, leaving leading `~` literal.
+    # Fall back to `Path.home()` directly when that happens.
+    if raw.startswith("~/") and str(p).startswith("~/"):
+        p = Path.home() / raw[2:]
+    elif raw == "~" and str(p) == "~":
+        p = Path.home()
+    p = p.resolve()
 
     if p.is_file() and p.suffix == ".kicad_pro":
         return _from_pro(p)

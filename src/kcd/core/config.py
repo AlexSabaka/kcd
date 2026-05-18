@@ -31,6 +31,12 @@ class Config:
     """Where auto-renders go (`/tmp/kcd/` by default). Last edit lands at
     `<render_cache_dir>/last-edit.{png,svg}`."""
 
+    kicad_cli_timeout: int
+    """Hard timeout (seconds) for any `kicad-cli` subprocess call. 60s by
+    default — generous enough for normal renders, short enough that an
+    interactive prompt (e.g. old-format conversion) surfaces as a structured
+    error within ~a minute instead of hanging the agent forever."""
+
 
 def load() -> Config:
     """Load configuration from environment variables with sensible defaults.
@@ -42,6 +48,7 @@ def load() -> Config:
         KCD_AUTO_SNAPSHOT   — `0` to disable, default enabled
         KCD_AUTO_RENDER     — `0` to disable, default enabled
         KCD_RENDER_CACHE    — render output dir, default `/tmp/kcd`
+        KCD_KICAD_CLI_TIMEOUT — subprocess timeout in seconds, default `60`
     """
     kicad_cli = os.environ.get("KCD_KICAD_CLI") or shutil.which("kicad-cli") or "kicad-cli"
     freerouting = os.environ.get("KCD_FREEROUTING_JAR")
@@ -49,6 +56,7 @@ def load() -> Config:
     auto_snap = os.environ.get("KCD_AUTO_SNAPSHOT", "1") != "0"
     auto_render = os.environ.get("KCD_AUTO_RENDER", "1") != "0"
     cache = Path(os.environ.get("KCD_RENDER_CACHE", "/tmp/kcd"))
+    cli_timeout = int(os.environ.get("KCD_KICAD_CLI_TIMEOUT", "60"))
 
     return Config(
         kicad_cli=kicad_cli,
@@ -57,4 +65,5 @@ def load() -> Config:
         auto_snapshot=auto_snap,
         auto_render=auto_render,
         render_cache_dir=cache,
+        kicad_cli_timeout=cli_timeout,
     )

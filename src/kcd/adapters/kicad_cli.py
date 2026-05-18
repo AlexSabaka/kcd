@@ -34,9 +34,34 @@ class CliResult:
     stderr: str
 
 
-def _run(cli: str, *args: str) -> CliResult:
+def _run(cli: str, *args: str, timeout: int | None = None) -> CliResult:
+    """Invoke kicad-cli with a hard timeout and no stdin.
+
+    `stdin=subprocess.DEVNULL` prevents interactive prompts (e.g. "convert
+    old-format file?") from deadlocking the subprocess; the child either
+    proceeds with defaults or errors out, but never blocks waiting on tty.
+
+    `timeout` defaults to the configured `kicad_cli_timeout` when unset.
+    """
+    from kcd.core import config as cfg_mod
     cmd = [cli, *args]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    effective_timeout = timeout if timeout is not None else cfg_mod.load().kicad_cli_timeout
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=effective_timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise CliError(
+            cmd,
+            -1,
+            (e.stdout.decode() if isinstance(e.stdout, bytes) else e.stdout) or "",
+            (e.stderr.decode() if isinstance(e.stderr, bytes) else e.stderr)
+            or f"kicad-cli timed out after {effective_timeout}s",
+        ) from e
     if proc.returncode != 0:
         raise CliError(cmd, proc.returncode, proc.stdout, proc.stderr)
     return CliResult(stdout=proc.stdout, stderr=proc.stderr)

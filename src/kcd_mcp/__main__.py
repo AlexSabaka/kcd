@@ -17,6 +17,7 @@ Configure in Claude Desktop's claude_desktop_config.json::
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from typing import Any
@@ -25,23 +26,37 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("kcd")
 
+# How many bytes of stderr to surface on hard crash (empty/non-JSON stdout).
+# Generous because this is the agent's only debugging channel when kcd
+# couldn't emit an envelope — clipping at ~500 (the previous default) lost
+# whole tracebacks mid-frame.
+_STDERR_CAP = 4000
+
 
 def _run(args: list[str]) -> dict[str, Any]:
     """Invoke `python -m kcd <args> --json` and return the parsed envelope.
 
-    kcd exits 1 on failure but always writes a structured envelope to stdout
-    (after the patches in this session). We surface both ok and !ok results
-    to the agent so it can react — non-zero exit alone isn't a tool failure.
+    kcd always writes a structured envelope to stdout (envelope-everywhere
+    wrapper in core/output.py), so non-zero exit + clean JSON is the normal
+    error case. The fallback branches below only fire if kcd somehow died
+    before emit() ran — in which case full stderr is the diagnostic.
+
+    We pass `env=os.environ.copy()` explicitly so $HOME and $PATH propagate
+    into the kcd subprocess — without it, the MCP-spawned child can end up
+    with a stripped env and tilde-paths fail to expand.
     """
     cmd = [sys.executable, "-m", "kcd", *args, "--json"]
     print(f"[kcd-mcp] exec: {' '.join(cmd)}", file=sys.stderr)
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=os.environ.copy())
     if not proc.stdout.strip():
         return {
             "ok": False,
             "error": {
                 "code": "no_output",
-                "message": f"kcd produced no stdout (exit {proc.returncode}). stderr: {proc.stderr.strip()[:500]}",
+                "message": (
+                    f"kcd produced no stdout (exit {proc.returncode}). "
+                    f"stderr: {proc.stderr.strip()[:_STDERR_CAP]}"
+                ),
             },
         }
     try:
@@ -51,7 +66,10 @@ def _run(args: list[str]) -> dict[str, Any]:
             "ok": False,
             "error": {
                 "code": "bad_json",
-                "message": f"kcd stdout was not valid JSON: {e}. raw: {proc.stdout[:500]}",
+                "message": (
+                    f"kcd stdout was not valid JSON: {e}. "
+                    f"raw: {proc.stdout[:_STDERR_CAP]}"
+                ),
             },
         }
 
