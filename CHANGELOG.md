@@ -28,6 +28,16 @@ Initial alpha release.
 - Auto-render after every mutating command (lands in `$KCD_RENDER_CACHE`)
 - Universal `--json` flag for agent-friendly output
 
+### Fixed
+- `kcd project current` schematic entries now carry a real filesystem `path`
+  (the `.kicad_sch` file location). Previously the parser read kipy's
+  `sheet_path.path_human_readable` field, which is the sheet-*hierarchy*
+  path (`"/"`, `"/SubA/"`) — and on some setups came through empty.
+  The fix reconstructs `path` from the `ProjectSpecifier` (project dir +
+  project name + `.kicad_sch`), matching the board entry's shape. The
+  hierarchy info is preserved in a new `sheet_path` field on schematic
+  entries. Dove session-5 close.
+
 ### Known limitations
 - Diff-pair length tuning: not implemented
 - Specctra DSN export: not headless (manual KiCad step required)

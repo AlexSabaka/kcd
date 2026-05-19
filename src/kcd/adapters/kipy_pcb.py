@@ -98,10 +98,38 @@ def list_open_documents() -> list[dict[str, Any]]:
                     }
                 )
             elif kind == "schematic":
+                # `sheet_path.path_human_readable` is the SHEET-HIERARCHY
+                # path (e.g. "/", "/SubA/"), NOT the filesystem path —
+                # confirmed in kipy's proto comments: "The path converted
+                # to a human readable form such as '/', '/child', or
+                # '/child/grandchild'". On some setups it even comes
+                # through empty (Dove session-5 close).
+                #
+                # Reconstruct the actual .kicad_sch file path from the
+                # project specifier — same pattern the board branch above
+                # uses with project.path + board_filename. KiCad always
+                # names the root schematic <project-name>.kicad_sch inside
+                # the project dir. Hierarchical sub-sheets are separate
+                # files in the same dir but kipy doesn't tell us which
+                # individual sheet the editor is currently focused on,
+                # only the hierarchy.
+                project_dir = d.project.path if d.HasField("project") else ""
+                project_name = d.project.name if d.HasField("project") else ""
+                full_path = (
+                    str(_Path(project_dir) / f"{project_name}.kicad_sch")
+                    if project_dir and project_name
+                    else ""
+                )
+                sheet_hier = getattr(d.sheet_path, "path_human_readable", "") or ""
                 out.append(
                     {
                         "kind": "schematic",
-                        "path": getattr(d.sheet_path, "path_human_readable", "") or "",
+                        "path": full_path,
+                        "filename": (
+                            f"{project_name}.kicad_sch" if project_name else ""
+                        ),
+                        "project_dir": project_dir,
+                        "sheet_path": sheet_hier,
                     }
                 )
             else:
