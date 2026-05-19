@@ -43,18 +43,28 @@ def _pre_edit(
 
 
 def _post_edit_sch(proj: Project, result: Result, no_render: bool = False) -> None:
-    """Auto-render the schematic to the cache dir. Failures degrade to warnings."""
+    """Auto-render the schematic to the cache dir. Failures degrade to warnings.
+
+    Attribution is mtime-filtered: we snapshot every existing `*.svg` in the
+    cache dir before kicad-cli runs and only attribute files whose mtime
+    *changed* (or which are entirely new) — otherwise stale SVGs from prior
+    sessions / other projects sharing the default `/tmp/kcd` cache surface as
+    fake artifacts of the current command (Dove session-2 #12).
+    """
     cfg = cfg_mod.load()
     if not cfg.auto_render or no_render:
         return
-    cfg.render_cache_dir.mkdir(parents=True, exist_ok=True)
     out_dir = cfg.render_cache_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    before = {p: p.stat().st_mtime_ns for p in out_dir.glob("*.svg")}
     try:
         kicad_cli.export_sch_svg(cfg.kicad_cli, proj.sch, out_dir)
-        for svg in sorted(out_dir.glob("*.svg")):
-            result.add_artifact("schematic_svg", str(svg))
     except kicad_cli.CliError as e:
         result.warn(f"Auto-render failed: {e}")
+        return
+    for svg in sorted(out_dir.glob("*.svg")):
+        if svg not in before or svg.stat().st_mtime_ns > before[svg]:
+            result.add_artifact("schematic_svg", str(svg))
 
 
 # ---------------------------------------------------------------------------
