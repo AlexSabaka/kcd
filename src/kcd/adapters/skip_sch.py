@@ -44,6 +44,7 @@ def list_symbols(sch_path: Path) -> list[dict[str, Any]]:
             "footprint": _prop(sym, "Footprint"),
             "lib_id": _lib_id(sym),
             "datasheet": _prop(sym, "Datasheet"),
+            "properties": _all_properties(sym),
         })
     return out
 
@@ -286,7 +287,23 @@ def _symbol_to_dict(sym: Any) -> dict[str, Any]:
         "footprint": _prop(sym, "Footprint"),
         "datasheet": _prop(sym, "Datasheet"),
         "lib_id": _lib_id(sym),
+        "properties": _all_properties(sym),
     }
+
+
+def _all_properties(sym: Any) -> dict[str, str]:
+    """Every property on the symbol as `{name: value}`.
+
+    Canonical fields (Reference/Value/Footprint/Datasheet) are also exposed at
+    the top level of the symbol dict for convenience, but user-added fields
+    (MPN, Manufacturer, Stock, ...) only land here — agents that need to read
+    arbitrary properties iterate this dict instead of guessing at attribute
+    names.
+    """
+    try:
+        return {p.name: p.value for p in sym.property}
+    except Exception:
+        return {}
 
 
 def _lib_id(sym: Any) -> str | None:

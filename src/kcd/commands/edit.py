@@ -187,7 +187,11 @@ def prop(
     with run_command("edit.prop", json_) as r:
         proj, r.snapshot_before = _pre_edit(project, f"prop {ref}.{field}={value}", no_snapshot)
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
-        r.data = {"updated": skip_sch.set_property(proj.sch, ref, field, value)}
+        r.data = {
+            "updated": skip_sch.set_property(proj.sch, ref, field, value),
+            "field": field,
+            "value": value,
+        }
         _post_edit_sch(proj, r, mtimes, no_render=no_render)
 
 

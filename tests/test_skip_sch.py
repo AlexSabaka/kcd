@@ -91,3 +91,36 @@ def test_set_property_raises_on_missing_symbol(sch_path: Path) -> None:
     """Unknown reference designator raises SchEditError, not a low-level error."""
     with pytest.raises(skip_sch.SchEditError, match="R99"):
         skip_sch.set_property(sch_path, "R99", "MPN", "x")
+
+
+# ---------------------------------------------------------------------------
+# Phase κ: properties echo (Dove session-3 #17)
+# ---------------------------------------------------------------------------
+
+def test_find_symbol_echoes_all_properties(sch_path: Path) -> None:
+    """find_symbol's returned dict carries a `properties` mapping that includes
+    canonical + user-added fields. Previously custom props were write-only."""
+    skip_sch.set_property(sch_path, "R1", "MPN", "RC0805FR-0710KL")
+    skip_sch.set_property(sch_path, "R1", "Manufacturer", "Yageo")
+
+    info = skip_sch.find_symbol(sch_path, "R1")
+    assert "properties" in info
+    assert info["properties"]["Reference"] == "R1"
+    assert info["properties"]["Value"] == "10k"
+    assert info["properties"]["MPN"] == "RC0805FR-0710KL"
+    assert info["properties"]["Manufacturer"] == "Yageo"
+
+
+def test_set_property_returns_properties_dict(sch_path: Path) -> None:
+    """The mutator itself echoes the new property in its return value."""
+    info = skip_sch.set_property(sch_path, "R1", "Stock", "5000")
+    assert info["properties"]["Stock"] == "5000"
+
+
+def test_list_symbols_includes_properties(sch_path: Path) -> None:
+    """list_symbols carries the same properties dict for bulk enumeration."""
+    skip_sch.set_property(sch_path, "R1", "MPN", "FOO")
+    syms = skip_sch.list_symbols(sch_path)
+    assert len(syms) == 1
+    assert syms[0]["properties"]["MPN"] == "FOO"
+    assert syms[0]["properties"]["Reference"] == "R1"
