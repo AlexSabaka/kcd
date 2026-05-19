@@ -269,6 +269,26 @@ def add_track(
     }
 
 
+def revert_board() -> None:
+    """Force KiCad to discard in-memory board state and reload from disk.
+
+    Sends `RevertDocument` via kipy — the IPC-side equivalent of KiCad's
+    File → Revert. Used by `snapshot.restore` to keep the editor in sync
+    after kcd writes the project files: without this, KiCad's editor keeps
+    the pre-restore state in memory and the next mutating IPC call
+    (`move_footprint`, etc.) calls `board.save()` and writes that stale
+    memory back on top of the restored file, silently undoing the user's
+    revert (Dove session-3 #18).
+
+    Raises:
+        IpcUnavailable: KiCad isn't reachable (no editor open, kipy down).
+            Callers should treat this as "nothing in memory to sync, the
+            disk is already correct."
+    """
+    board = get_board()
+    board.revert()
+
+
 def run_drc_via_ipc() -> dict[str, Any] | None:
     """Trigger a DRC run via IPC if supported by this kipy version.
 

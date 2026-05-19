@@ -82,7 +82,31 @@ def restore(
         proj = resolve(project)
         store = SnapshotStore(proj, dir_name=cfg.snapshot_dir_name)
         info = store.restore(ref)
-        r.data = {"ref": info.ref, "short": info.short, "message": info.message}
+        payload: dict[str, object] = {
+            "ref": info.ref,
+            "short": info.short,
+            "message": info.message,
+        }
+        # Force KiCad to reload from the just-restored disk file. Without this,
+        # the editor keeps its pre-restore memory state and the next mutating
+        # IPC call (`move_footprint`, ...) saves that stale memory on top of
+        # the revert — silent corruption of the user's restore (Dove #18).
+        # IpcUnavailable just means no editor is open → nothing to sync.
+        from kcd.adapters import kipy_pcb
+        from kcd.core.ipc import IpcUnavailable
+        try:
+            kipy_pcb.revert_board()
+            payload["kicad_reverted"] = True
+        except IpcUnavailable:
+            payload["kicad_reverted"] = False
+        except Exception as e:  # noqa: BLE001
+            r.warn(
+                f"Snapshot file restored but KiCad's in-memory board may be "
+                f"stale: {e}. Run File → Revert in KiCad to sync, or close "
+                "and reopen the .kicad_pcb."
+            )
+            payload["kicad_reverted"] = False
+        r.data = payload
 
 
 @snapshot_app.command("diff")
