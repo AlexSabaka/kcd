@@ -44,6 +44,49 @@ def pcb(
         }
 
 
+def _check_consistency(sch_info: dict, pcb_info: dict | None) -> dict:
+    """Compare schematic and PCB views of the same reference.
+
+    Schematic has `value` + `footprint` (lib:fp form). PCB has `value` +
+    `library_id` (also lib:fp form, populated by KiCad on PCB import).
+    KiCad's `Update PCB from Schematic` is a *manual* step, so the two can
+    drift; an agent looking at both sides without a divergence flag will
+    silently treat them as equivalent and reason wrong. This block makes
+    that drift loud.
+
+    Returns a dict that is *always* present in the payload — the
+    `pcb_available` field tells the agent whether comparison was possible.
+    """
+    if pcb_info is None:
+        return {
+            "pcb_available": False,
+            "notes": [
+                "PCB info unavailable (KiCad not open with PCB, or footprint "
+                "missing from board) — schematic↔PCB consistency not checked."
+            ],
+        }
+    value_matches = sch_info.get("value") == pcb_info.get("value")
+    fp_matches = sch_info.get("footprint") == pcb_info.get("library_id")
+    notes: list[str] = []
+    if not value_matches:
+        notes.append(
+            f"value differs: schematic={sch_info.get('value')!r} vs "
+            f"PCB={pcb_info.get('value')!r}. Run 'Update PCB from Schematic' "
+            "in KiCad to sync."
+        )
+    if not fp_matches:
+        notes.append(
+            f"footprint differs: schematic={sch_info.get('footprint')!r} vs "
+            f"PCB={pcb_info.get('library_id')!r}."
+        )
+    return {
+        "pcb_available": True,
+        "value_matches": value_matches,
+        "footprint_matches": fp_matches,
+        "notes": notes,
+    }
+
+
 @inspect_app.command("ref")
 def ref(
     project: str = typer.Argument(...),
@@ -70,5 +113,13 @@ def ref(
                 "KiCad not running with PCB open; PCB info unavailable. "
                 "Open the .kicad_pcb file to enrich this query."
             )
+
+        consistency = _check_consistency(sch_info, payload["pcb"])
+        payload["consistency"] = consistency
+        # Mirror divergence notes into envelope `warnings` so clients that
+        # don't unpack `data.consistency.notes` still see them.
+        for note in consistency.get("notes", []):
+            if consistency.get("pcb_available"):  # don't double-warn for "PCB unavailable"
+                r.warn(f"sch↔pcb: {note}")
 
         r.data = payload
