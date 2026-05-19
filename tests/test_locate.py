@@ -109,9 +109,13 @@ def test_locate_finds_symbol_on_subsheet(hierarchical_proj) -> None:
 
 
 def test_locate_raises_for_missing_symbol(hierarchical_proj) -> None:
-    """A reference not on any sheet raises with an informative project-wide message."""
-    with pytest.raises(skip_sch.SchEditError, match="any sheet"):
+    """A reference not on any sheet raises `SymbolNotFound` with a project-wide
+    message. The exception subclasses `LookupError` so the run_command envelope
+    classifies it as `error.code: "not_found"` (Dove session-4 #23)."""
+    with pytest.raises(skip_sch.SymbolNotFound, match="any sheet") as exc_info:
         skip_sch.locate(hierarchical_proj, "Q99")
+    assert isinstance(exc_info.value, LookupError)
+    assert not isinstance(exc_info.value, skip_sch.SchEditError)
 
 
 def test_list_symbols_all_aggregates_across_sheets(hierarchical_proj) -> None:

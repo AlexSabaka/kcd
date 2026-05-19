@@ -21,6 +21,17 @@ class SchEditError(RuntimeError):
     pass
 
 
+class SymbolNotFound(LookupError):
+    """Reference designator not present in the indicated sheet (or project).
+
+    Subclasses `LookupError` (not `SchEditError`) so the envelope at
+    `kcd.core.output.run_command` classifies it as ``error.code: "not_found"``
+    rather than ``"edit_failed"``. The not-found case is honestly a lookup
+    miss — agents discriminating "command broke" from "input was wrong" rely
+    on the distinction (Dove session-4 #23).
+    """
+
+
 def _load(sch_path: Path):
     try:
         from skip import Schematic
@@ -55,7 +66,7 @@ def find_symbol(sch_path: Path, reference: str) -> dict[str, Any]:
     for sym in sch.symbol:
         if _prop(sym, "Reference") == reference:
             return _symbol_to_dict(sym)
-    raise SchEditError(f"Symbol {reference!r} not found in {sch_path.name}")
+    raise SymbolNotFound(f"Symbol {reference!r} not found in {sch_path.name}")
 
 
 def set_value(sch_path: Path, reference: str, new_value: str) -> dict[str, Any]:
@@ -245,7 +256,7 @@ def locate(proj: Project, reference: str) -> tuple[Path, str]:
     (Dove session-3 #20).
 
     Raises:
-        SchEditError: No sheet in the project contains the reference.
+        SymbolNotFound: No sheet in the project contains the reference.
     """
     for entry in sheet_index(proj):
         path = entry["file"]
@@ -253,10 +264,10 @@ def locate(proj: Project, reference: str) -> tuple[Path, str]:
             continue
         try:
             find_symbol(path, reference)
-        except SchEditError:
+        except SymbolNotFound:
             continue
         return path, (entry["name"] or "root")
-    raise SchEditError(
+    raise SymbolNotFound(
         f"Symbol {reference!r} not found in any sheet of {proj.name}"
     )
 
