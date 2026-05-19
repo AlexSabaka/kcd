@@ -9,8 +9,12 @@ Reference: https://github.com/psychogenic/kicad-skip
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Any
+
+from kcd.core.project import Project
 
 
 class SchEditError(RuntimeError):
@@ -126,6 +130,120 @@ def delete_symbol(sch_path: Path, reference: str) -> dict[str, Any]:
             sch.write(str(sch_path))
             return info
     raise SchEditError(f"Symbol {reference!r} not found in {sch_path.name}")
+
+
+def sheet_index(proj: Project) -> list[dict[str, Any]]:
+    """Return the project's sheets in kicad-cli page order.
+
+    Each entry: ``{"page": int, "uuid": str, "name": str, "file": Path | None,
+    "svg_filename": str}``.
+
+    Page 1 is always the root .kicad_sch. Pages 2..N correspond to sheet
+    instances in the hierarchy — the `.kicad_pro` file's `sheets` array
+    lists them in page order as `[[uuid, display_name], ...]`, where each
+    UUID matches a `(sheet ... (uuid ...))` block somewhere in the project's
+    .kicad_sch files. The block's `Sheetfile` property names the actual file.
+
+    `svg_filename` is what kicad-cli will write for that page:
+        - page 1 → `<project_name>.svg`
+        - page N → `<project_name>-<sheet_display_name>.svg`
+
+    Behavior on degenerate inputs: if `.kicad_pro` is missing or has no
+    `sheets` key, fall back to a single root entry. If a sub-sheet UUID
+    doesn't match anything in the .kicad_sch hierarchy (orphan), `file` is
+    `None` — callers should treat that as "render-all fallback".
+
+    Caveat: kicad-cli 10.0.2's `sch export svg --pages` flag is broken — it
+    always renders only page 1 regardless of input. So callers can use this
+    index to *filter artifact attribution* by file, but can't (yet) tell
+    kicad-cli to render fewer pages. Worth filing upstream when there's time.
+    """
+    try:
+        pro_data = json.loads(proj.pro.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return _fallback_sheet_index(proj)
+
+    entries = pro_data.get("sheets") or []
+    if not entries:
+        return _fallback_sheet_index(proj)
+
+    # Build a uuid → Sheetfile map by scanning every .kicad_sch in the
+    # project root for (sheet ...) instances. A regex over the raw s-expr
+    # is enough here — we only need the per-sheet block's UUID + Sheetfile,
+    # no nested-paren depth tracking required because both fields land at
+    # the same outer level inside the (sheet ...) block.
+    sheet_re = re.compile(
+        r'\(sheet\b(?P<body>(?:[^()]|\([^()]*\))*)',
+        re.DOTALL,
+    )
+    uuid_re = re.compile(r'\(uuid\s+"([^"]+)"\)')
+    sheetfile_re = re.compile(r'\(property\s+"Sheetfile"\s+"([^"]+)"')
+
+    uuid_to_file: dict[str, str] = {}
+    for sch_file in proj.root.glob("*.kicad_sch"):
+        try:
+            text = sch_file.read_text()
+        except OSError:
+            continue
+        for m in sheet_re.finditer(text):
+            body = m.group("body")
+            u = uuid_re.search(body)
+            f = sheetfile_re.search(body)
+            if u and f:
+                uuid_to_file[u.group(1)] = f.group(1)
+
+    out: list[dict[str, Any]] = []
+    for i, entry in enumerate(entries):
+        page = i + 1
+        uuid = entry[0] if len(entry) > 0 else ""
+        name = entry[1] if len(entry) > 1 else ""
+        if page == 1:
+            sch_file: Path | None = proj.sch
+            svg_name = f"{proj.name}.svg"
+        else:
+            filename = uuid_to_file.get(uuid)
+            sch_file = (proj.root / filename) if filename else None
+            # kicad-cli composes sub-sheet SVG names as `<root>-<sheetname>.svg`
+            # using the display name from .kicad_pro (the second element of
+            # each sheets entry). Names with path separators or unusual chars
+            # may get sanitized by kicad-cli; we use the raw form and trust
+            # the common case — callers can fall back to "render all" via the
+            # `None`-file branch when this doesn't match.
+            svg_name = f"{proj.name}-{name}.svg"
+        out.append({
+            "page": page,
+            "uuid": uuid,
+            "name": name,
+            "file": sch_file,
+            "svg_filename": svg_name,
+        })
+    return out
+
+
+def _fallback_sheet_index(proj: Project) -> list[dict[str, Any]]:
+    return [{
+        "page": 1,
+        "uuid": "",
+        "name": "",
+        "file": proj.sch,
+        "svg_filename": f"{proj.name}.svg",
+    }]
+
+
+def snapshot_sheet_mtimes(proj: Project) -> dict[Path, int]:
+    """Capture mtime_ns of every .kicad_sch in the project root.
+
+    Paired with `_post_edit_sch` artifact filtering: we want to know which
+    sheet file(s) the edit actually touched so we can attribute the right
+    rendered SVG(s) and skip the ones that didn't change.
+    """
+    out: dict[Path, int] = {}
+    for sch_file in proj.root.glob("*.kicad_sch"):
+        try:
+            out[sch_file] = sch_file.stat().st_mtime_ns
+        except OSError:
+            continue
+    return out
 
 
 def list_nets(sch_path: Path) -> list[dict[str, Any]]:

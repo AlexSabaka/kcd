@@ -57,7 +57,7 @@ def test_post_edit_sch_skips_stale_svgs(
     monkeypatch.setattr(kicad_cli, "export_sch_svg", fake_export)
 
     r = Result(command="edit.value")
-    edit_cmd._post_edit_sch(fake_proj, r)
+    edit_cmd._post_edit_sch(fake_proj, r, sheet_mtimes_before={})
 
     artifact_paths = [a["path"] for a in r.to_dict()["artifacts"]]
     assert str(fresh_path) in artifact_paths
@@ -80,7 +80,7 @@ def test_post_edit_sch_includes_refreshed_svgs(
     monkeypatch.setattr(kicad_cli, "export_sch_svg", fake_export)
 
     r = Result(command="edit.value")
-    edit_cmd._post_edit_sch(fake_proj, r)
+    edit_cmd._post_edit_sch(fake_proj, r, sheet_mtimes_before={})
 
     artifact_paths = [a["path"] for a in r.to_dict()["artifacts"]]
     assert str(existing) in artifact_paths
@@ -97,7 +97,7 @@ def test_post_edit_sch_warns_on_cli_failure(
     monkeypatch.setattr(kicad_cli, "export_sch_svg", fake_export)
 
     r = Result(command="edit.value")
-    edit_cmd._post_edit_sch(fake_proj, r)
+    edit_cmd._post_edit_sch(fake_proj, r, sheet_mtimes_before={})
 
     d = r.to_dict()
     assert d["artifacts"] == []
@@ -117,7 +117,7 @@ def test_post_edit_sch_respects_no_render(
     monkeypatch.setattr(kicad_cli, "export_sch_svg", fake_export)
 
     r = Result(command="edit.value")
-    edit_cmd._post_edit_sch(fake_proj, r, no_render=True)
+    edit_cmd._post_edit_sch(fake_proj, r, sheet_mtimes_before={}, no_render=True)
 
     assert called["export"] is False
     assert r.to_dict()["artifacts"] == []
