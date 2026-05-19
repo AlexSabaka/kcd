@@ -45,6 +45,8 @@ kcd render   sch|pcb|3d
 kcd inspect  sch|pcb|ref
 kcd edit     value|ref|footprint|prop|delete|add-symbol|add-power
 kcd net      trace|of|components
+kcd analyze  sch|pcb|gerbers                # knowledge-layer (vendored kicad-happy)
+kcd parity   <proj>                          # schematic ↔ PCB reference drift
 kcd drc      [--json]
 kcd erc      [--json]
 kcd route    track|freeroute|diff-pair|unroute

@@ -134,8 +134,14 @@ kcd edit delete    <proj> --ref C3 [--json]
 kcd edit move-fp <proj> --ref R5 --x 100 --y 50 [--rotation 90] [--json]
 
 # Validate
-kcd drc <proj> [--json]
-kcd erc <proj> [--json]
+kcd drc    <proj> [--json]
+kcd erc    <proj> [--json]
+kcd parity <proj> [--json]                       # schematic ↔ PCB ref drift
+
+# Analyze (knowledge-layer; vendored kicad-happy, read-only)
+kcd analyze sch     <proj>        [--out <file>] [--json]
+kcd analyze pcb     <proj>        [--out <file>] [--json]
+kcd analyze gerbers <gerber-dir>  [--out <file>] [--json]
 
 # Route
 kcd route track <proj> --net VCC --from 100,50 --to 110,50 --layer F.Cu --width 0.25
