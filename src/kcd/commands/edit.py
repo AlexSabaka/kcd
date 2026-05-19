@@ -224,10 +224,23 @@ def move_fp(
     no_snapshot: bool = typer.Option(False, "--no-snapshot"),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Move a footprint on the PCB. Requires KiCad open with PCB editor."""
+    """Move a footprint on the PCB. Requires KiCad open with PCB editor.
+
+    Note: this calls `board.save()` after mutating, which persists *any*
+    unsaved changes the user has open in the PCB editor along with the
+    footprint move. kipy 0.7.1 has no dirty-check API so kcd can't avoid
+    or warn about specific edits — the warning emitted on every call is
+    a blanket advisory. Save or revert in the editor before running.
+    """
     with run_command("edit.move-fp", json_) as r:
         _proj, r.snapshot_before = _pre_edit(
             project, f"move {ref} to {x},{y}mm", no_snapshot, auto=True
+        )
+        r.warn(
+            "move-fp calls board.save() — any unsaved changes you have open "
+            "in KiCad's PCB editor are persisted along with this edit. "
+            "kipy 0.7.1 has no API to detect or skip this; save or revert in "
+            "the editor before running mutating IPC commands."
         )
         from kcd.adapters import kipy_pcb
         r.data = {"updated": kipy_pcb.move_footprint(ref, x, y, rotation)}

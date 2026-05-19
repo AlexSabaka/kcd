@@ -203,7 +203,15 @@ def find_footprint(reference: str) -> dict[str, Any]:
 
 
 def move_footprint(reference: str, x_mm: float, y_mm: float, rotation_deg: float | None = None) -> dict[str, Any]:
-    """Move a footprint to a new position; optionally rotate."""
+    """Move a footprint to a new position; optionally rotate.
+
+    Caveat: calls `board.save()` after the move. kipy 0.7.1 has no
+    `is_dirty()` / `has_unsaved_changes()` API, so this *will* persist
+    whatever in-editor changes the user has alongside the footprint
+    move. The CLI surface (`kcd edit move-fp`) emits a warning to
+    that effect on every call; see `.claude/CLAUDE.md`'s "External-edit
+    caveats" section for the user-facing version.
+    """
     board = get_board()
     for fp in board.get_footprints():
         try:

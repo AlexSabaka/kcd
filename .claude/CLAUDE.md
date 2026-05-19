@@ -97,6 +97,16 @@ The `--yes` flag skips the interactive confirmation (necessary for agentic use).
 - **Don't loop on `inspect pcb` to detect when KiCad opens** — that's a polling antipattern. If IPC fails once, ask the user to open KiCad.
 - **Don't manually edit `.kicad_pro`, `.kicad_sch`, or `.kicad_pcb` files** outside kcd — you'll bypass snapshots.
 
+## External-edit caveats
+
+kcd writes to project files via two different paths — `kicad-skip` for schematic edits (works offline, no KiCad IPC needed) and `kipy` IPC for PCB edits (needs KiCad open). Both interact with the running KiCad app in ways the user should be primed for:
+
+- **Schematic edits while KiCad's schematic editor is open** trigger a *"file modified externally — reload?"* prompt in KiCad on next focus. Expected behavior: kcd writes the `.kicad_sch` directly, KiCad's in-editor copy doesn't know. Tell the user to accept the reload. If the user wants to avoid the prompt entirely, ask them to close the schematic editor before agentic schematic-edit sessions (the PCB editor staying open is fine).
+
+- **`edit move-fp` calls `board.save()` unconditionally.** kipy 0.7.1 exposes no `is_dirty` / `has_unsaved_changes` API, so kcd can't tell whether the user has unsaved changes in the PCB editor before saving. Any unsaved edits the user has open *will* be persisted along with the agent's footprint move. The `move-fp` envelope always carries a warning to that effect — surface it to the user. Practical guidance: tell the user to save (Ctrl/Cmd-S) or revert their in-editor changes before kicking off an agent that runs `edit move-fp`.
+
+- **Don't have both the schematic editor and PCB editor open at the same time** while running IPC commands. KiCad 10.0.2 has a known IPC-routing segfault when multiple editors are loaded. Keep PCB-only for `inspect pcb` / `edit move-fp` / `route track` work; close the schematic editor first.
+
 ## Subcommand cheat sheet for agents
 
 ```
