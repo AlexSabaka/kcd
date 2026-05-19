@@ -87,21 +87,26 @@ def set_footprint(sch_path: Path, reference: str, footprint: str) -> dict[str, A
 
 
 def set_property(sch_path: Path, reference: str, field: str, value: str) -> dict[str, Any]:
-    """Set or create an arbitrary property on a symbol (e.g. MPN, Manufacturer)."""
+    """Set or create an arbitrary property on a symbol (e.g. MPN, Manufacturer).
+
+    kicad-skip 0.2.5 has no public `add_property` / `setProperty` method. The
+    earlier `hasattr(sym, "setProperty")` branch was a bug trap: kicad-skip's
+    `ParsedValueWrapper.__getattr__` returns `None` on unknown attrs instead of
+    raising, so `hasattr` is truthy and we'd end up calling `None(field, value)`
+    → `TypeError`. Instead, use `PropertyCollection.__contains__` (the `in`
+    operator) for existence-check, and `PropertyString.clone()` to add a new
+    property — clone auto-appends to `sym.property`. `Reference` is always
+    present per KiCad schematic rules so it's a stable template.
+    """
     sch = _load(sch_path)
     for sym in sch.symbol:
         if _prop(sym, "Reference") == reference:
-            try:
-                getattr(sym.property, field).value = value
-            except AttributeError:
-                # Property doesn't exist yet — kicad-skip supports adding
-                if hasattr(sym, "setProperty"):
-                    sym.setProperty(field, value)
-                else:
-                    raise SchEditError(
-                        f"Cannot create property {field!r} — your kicad-skip version "
-                        "may not support property creation. Add the field in KiCad first."
-                    )
+            if field in sym.property:
+                sym.property[field].value = value
+            else:
+                new_prop = sym.property.Reference.clone()
+                new_prop.name = field
+                new_prop.value = value
             sch.write(str(sch_path))
             return _symbol_to_dict(sym)
     raise SchEditError(f"Symbol {reference!r} not found in {sch_path.name}")
