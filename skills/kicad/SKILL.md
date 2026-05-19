@@ -18,6 +18,53 @@ description: >-
 
 # KiCad Project Analysis Skill
 
+## Using this skill from kcd
+
+This skill is vendored into the kcd repo at `skills/kicad/` (originator:
+`aklofas/kicad-happy` — see `ATTRIBUTION.md`). The three top-billing analyzers
+are wrapped behind `kcd analyze` so the JSON envelope, artifact registration,
+and warning lifting all match the rest of the kcd CLI:
+
+```bash
+kcd analyze sch     <project>   --json    # → analyze_schematic.py
+kcd analyze pcb     <project>   --json    # → analyze_pcb.py
+kcd analyze gerbers <directory> --json    # → analyze_gerbers.py
+```
+
+`<project>` accepts a `.kicad_pro` path, a project directory, or the project
+name. The raw analyzer JSON lands at `$KCD_RENDER_CACHE/<name>-analyze-{sch,pcb,gerbers}.json`
+and is registered as an envelope artifact for cheap re-reads. Findings with
+severity `warning`, `error`, or `critical` are mirrored into envelope
+`warnings[]` (tagged `[severity][rule_id]`) so agents that skim the top of
+the response still see the headline issues.
+
+**Standard agentic loop (opening move for any KiCad review):**
+
+```bash
+kcd project current --json                # what's KiCad working on right now?
+kcd analyze sch <project> --json &        # parallel: schematic structure + findings
+kcd analyze pcb <project> --json &        # parallel: PCB layout + DFM signals
+kcd parity     <project> --json           # schematic ↔ PCB reference-set drift
+wait
+```
+
+Cross-reference the three results to find high-confidence issues — anything
+flagged by both the analyzer AND parity is almost certainly real; analyzer-only
+findings need verification against the primary source (`kcd inspect ref`,
+`kcd inspect pcb`, raw `.kicad_sch`). See `references/schematic-analysis.md`,
+`references/pcb-layout-analysis.md`, and `references/standards-compliance.md`
+for the deep-dive methodology.
+
+**Beyond the three core analyzers**, this skill also ships
+`cross_analysis.py`, `analyze_thermal.py`, `diff_analysis.py`, `what_if.py`,
+and ~25 other scripts that aren't yet wrapped behind `kcd analyze`. From the
+kcd repo root, invoke them directly as `python3 skills/kicad/scripts/<name>.py`
+— the upstream usage in the sections below applies verbatim, just replace
+the `<skill-path>` placeholder with `skills/kicad`.
+
+**When the upstream sections below say `<skill-path>`**, that means
+`skills/kicad` relative to the kcd repo root.
+
 ## Related Skills
 
 | Skill | Purpose |
@@ -56,13 +103,13 @@ Treat this as the minimum bar. Analyzer JSON alone is not the final review.
 For a full design review, explicitly account for each item below in the report:
 
 - `datasheets/` present, synced, or verification gap stated
-- `analyze_schematic.py`
-- `analyze_pcb.py --full`
-- `cross_analysis.py`
-- `analyze_emc.py`
+- `kcd analyze sch <project> --json` (wraps `analyze_schematic.py`)
+- `python3 skills/kicad/scripts/analyze_pcb.py <pcb> --full` (kcd analyze pcb doesn't yet expose `--full`)
+- `python3 skills/kicad/scripts/cross_analysis.py -s sch.json -p pcb.json` (not yet wrapped)
+- `python3 skills/kicad/scripts/analyze_emc.py` (not yet wrapped)
 - SPICE simulation when any simulator is installed
-- `analyze_thermal.py` when both schematic and PCB JSON exist
-- `analyze_gerbers.py` when fabrication outputs exist
+- `python3 skills/kicad/scripts/analyze_thermal.py` when both schematic and PCB JSON exist
+- `kcd analyze gerbers <gerber_dir> --json` when fabrication outputs exist (wraps `analyze_gerbers.py`)
 - lifecycle audit when network access and MPN coverage allow it
 - prior review / prior run delta check
 - raw schematic/PCB spot-verification elevated to full verification for critical parts
@@ -133,9 +180,15 @@ In all commands below, `<skill-path>` refers to this skill's base directory (sho
 
 ### Schematic Analyzer
 ```bash
-python3 <skill-path>/scripts/analyze_schematic.py <file.kicad_sch> --analysis-dir analysis/
-python3 <skill-path>/scripts/analyze_schematic.py <file.kicad_sch> --analysis-dir analysis/ --compact
-python3 <skill-path>/scripts/analyze_schematic.py <file.kicad_sch> --output analysis.json  # one-off, no cache
+# kcd-native (recommended): wraps in the standard JSON envelope, lifts findings
+# with severity >= warning into envelope warnings[], saves raw JSON as artifact.
+kcd analyze sch <project> --json
+kcd analyze sch <project> --out custom-path.json --json
+
+# Direct script (when you need --analysis-dir / --compact / --schema / advanced flags):
+python3 skills/kicad/scripts/analyze_schematic.py <file.kicad_sch> --analysis-dir analysis/
+python3 skills/kicad/scripts/analyze_schematic.py <file.kicad_sch> --analysis-dir analysis/ --compact
+python3 skills/kicad/scripts/analyze_schematic.py <file.kicad_sch> --output analysis.json  # one-off, no cache
 ```
 Outputs structured JSON (~60-220KB depending on board complexity) with:
 - **Components & BOM**: inventory with reference, value, footprint, lib_id, type classification, MPN, datasheet; deduplicated BOM with quantities
@@ -179,9 +232,14 @@ See `references/schematic-analysis.md` Step 2 for the full verification checklis
 
 ### PCB Layout Analyzer
 ```bash
-python3 <skill-path>/scripts/analyze_pcb.py <file.kicad_pcb> --analysis-dir analysis/
-python3 <skill-path>/scripts/analyze_pcb.py <file.kicad_pcb> --analysis-dir analysis/ --proximity  # add crosstalk analysis
-python3 <skill-path>/scripts/analyze_pcb.py <file.kicad_pcb> --output pcb.json  # one-off, no cache
+# kcd-native (recommended):
+kcd analyze pcb <project> --json
+kcd analyze pcb <project> --out custom-path.json --json
+
+# Direct script (when you need --proximity / --full / --analysis-dir / --schema):
+python3 skills/kicad/scripts/analyze_pcb.py <file.kicad_pcb> --analysis-dir analysis/
+python3 skills/kicad/scripts/analyze_pcb.py <file.kicad_pcb> --analysis-dir analysis/ --proximity  # add crosstalk analysis
+python3 skills/kicad/scripts/analyze_pcb.py <file.kicad_pcb> --output pcb.json  # one-off, no cache
 ```
 Outputs structured JSON (~50-300KB depending on board complexity) with:
 - **Core**: footprint inventory (pads, courtyards, net assignments, extended attrs, schematic cross-reference), track/via statistics, zone summaries, board outline/dimensions, routing completeness
@@ -241,11 +299,13 @@ When `--full` is used with the PCB analyzer, the output includes a `connectivity
 
 ### Gerber & Drill Analyzer
 ```bash
-# Recommended: integrate into the current run
-python3 <skill-path>/scripts/analyze_gerbers.py <gerber_directory/> --analysis-dir analysis/
+# kcd-native (recommended):
+kcd analyze gerbers <gerber_directory/> --json
+kcd analyze gerbers <gerber_directory/> --out custom-path.json --json
 
-# One-off
-python3 <skill-path>/scripts/analyze_gerbers.py <gerber_directory/> --output gerber.json
+# Direct script (when you need --analysis-dir / --full / --schema):
+python3 skills/kicad/scripts/analyze_gerbers.py <gerber_directory/> --analysis-dir analysis/
+python3 skills/kicad/scripts/analyze_gerbers.py <gerber_directory/> --output gerber.json
 ```
 Outputs: layer identification (X2 attributes), component/net/pin mapping (KiCad 6+ TO attributes), aperture function classification, trace width distribution, board dimensions, drill classification (via/component/mounting), layer completeness, alignment verification, pad type summary (SMD/THT ratio). Add `--full` for complete pin-to-net connectivity dump. ~10KB JSON.
 

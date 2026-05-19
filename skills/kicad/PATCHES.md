@@ -28,13 +28,37 @@ None observed yet. If anything surfaces during Phase B integration testing,
 log it here with the analyzer + input + observed-vs-expected output, then file
 upstream.
 
-## Pending divergences from upstream content
+## Divergences from upstream content
 
-- `SKILL.md` rewrite (Phase C): replace `python3 scripts/analyze_*.py` examples
-  with `kcd analyze sch|pcb|gerbers` examples. Preserve structure (file-types
-  quick reference, analysis depth principles, datasheet acquisition,
-  schematic↔PCB cross-reference). Will be logged with file:line ranges once
-  the rewrite lands.
+### SKILL.md — kcd-native rewrite (Phase ω)
+
+Added a new "## Using this skill from kcd" section between the title and
+"## Related Skills" (originally line 21; now begins around line 22 after the
+insert). The new section teaches the standard kcd-native loop —
+`kcd project current` + `kcd analyze sch/pcb` + `kcd parity` in parallel as
+the opening move for any review — and clarifies that `<skill-path>` in the
+upstream sections below means `skills/kicad` relative to the kcd repo root.
+
+Replaced the three core-analyzer command blocks to lead with `kcd analyze *`
+and kept the direct `python3 skills/kicad/scripts/...` form as a fallback
+for advanced flags not yet exposed (`--analysis-dir`, `--proximity`,
+`--full`, `--schema`, `--audience`, `--stage`):
+
+  Schematic Analyzer block — `### Schematic Analyzer` heading
+  PCB Layout Analyzer block — `### PCB Layout Analyzer` heading
+  Gerber & Drill Analyzer block — `### Gerber & Drill Analyzer` heading
+
+Updated the Minimum Review Checklist (under `### Minimum Review Checklist`)
+to reference `kcd analyze sch|gerbers` for the wrapped analyzers and explicit
+`python3 skills/kicad/scripts/<name>.py` invocations for the not-yet-wrapped
+ones (`analyze_pcb.py --full`, `cross_analysis.py`, `analyze_emc.py`,
+`analyze_thermal.py`) so reviewers can still complete the full contract.
+
+All other `python3 <skill-path>/scripts/...` invocations elsewhere in the
+file (cross_analysis, what_if, diff_analysis, analyze_thermal,
+datasheet_page_selector, etc.) are intentionally left as upstream — the
+kcd-native preamble tells the reader to substitute `skills/kicad` for
+`<skill-path>` so the existing examples still work from the kcd repo root.
 
 ## Interesting findings (not patches, but worth surfacing)
 
