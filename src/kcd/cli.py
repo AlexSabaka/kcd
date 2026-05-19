@@ -13,6 +13,7 @@ from kcd.commands.edit import edit_app
 from kcd.commands.export import export_app
 from kcd.commands.inspect import inspect_app
 from kcd.commands.net import net_app
+from kcd.commands.parity import parity_cmd
 from kcd.commands.project import project_app
 from kcd.commands.render import render_app
 from kcd.commands.route import route_app
@@ -45,9 +46,10 @@ app.add_typer(net_app, name="net")
 app.add_typer(export_app, name="export")
 app.add_typer(route_app, name="route")
 
-# Flat top-level commands for DRC/ERC (they're frequent enough to deserve a short path)
+# Flat top-level commands (frequent enough to deserve a short path)
 app.command("drc")(drc_cmd)
 app.command("erc")(erc_cmd)
+app.command("parity")(parity_cmd)
 
 
 if __name__ == "__main__":
