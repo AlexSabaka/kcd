@@ -73,8 +73,25 @@ def _invoke_parity(proj_dir: Path) -> dict:
     return json.loads(result.stdout)
 
 
+def _mock_open_board_matches(monkeypatch, proj_dir: Path) -> None:
+    """Make `list_open_documents` report the *requested* project's PCB is open.
+
+    The session-4 #25 wrong-board guard calls `list_open_documents` before
+    `list_footprints`; happy-path tests need to clear that gate by reporting
+    the matching board path. Tests that intentionally probe the wrong-board
+    or IPC-unavailable branches set their own mock instead.
+    """
+    from kcd.adapters import kipy_pcb
+    from kcd.core.project import resolve
+    proj = resolve(str(proj_dir))
+    monkeypatch.setattr(kipy_pcb, "list_open_documents", lambda: [
+        {"kind": "board", "path": str(proj.pcb)},
+    ])
+
+
 def test_parity_clean_alignment(monkeypatch, two_symbol_proj: Path) -> None:
     """Sch ≡ PCB: all four drift lists empty, no warnings, pcb_available=True."""
+    _mock_open_board_matches(monkeypatch, two_symbol_proj)
     from kcd.adapters import kipy_pcb
     monkeypatch.setattr(kipy_pcb, "list_footprints", lambda: [
         {"reference": "R1", "value": "10k",
@@ -94,6 +111,7 @@ def test_parity_clean_alignment(monkeypatch, two_symbol_proj: Path) -> None:
 
 def test_parity_finds_pcb_only_and_schematic_only(monkeypatch, two_symbol_proj: Path) -> None:
     """Sch has R1, C1; PCB has C1, C99: → schematic_only=[R1], pcb_only=[C99]."""
+    _mock_open_board_matches(monkeypatch, two_symbol_proj)
     from kcd.adapters import kipy_pcb
     monkeypatch.setattr(kipy_pcb, "list_footprints", lambda: [
         {"reference": "C1", "value": "100n",
@@ -113,6 +131,7 @@ def test_parity_finds_pcb_only_and_schematic_only(monkeypatch, two_symbol_proj: 
 
 def test_parity_value_mismatch(monkeypatch, two_symbol_proj: Path) -> None:
     """R1 schematic=10k but PCB=4.7k → value_mismatches entry."""
+    _mock_open_board_matches(monkeypatch, two_symbol_proj)
     from kcd.adapters import kipy_pcb
     monkeypatch.setattr(kipy_pcb, "list_footprints", lambda: [
         {"reference": "R1", "value": "4.7k",
@@ -131,6 +150,7 @@ def test_parity_value_mismatch(monkeypatch, two_symbol_proj: Path) -> None:
 
 def test_parity_footprint_mismatch(monkeypatch, two_symbol_proj: Path) -> None:
     """R1 schematic=R_0805 but PCB=R_0603 → footprint_mismatches entry."""
+    _mock_open_board_matches(monkeypatch, two_symbol_proj)
     from kcd.adapters import kipy_pcb
     monkeypatch.setattr(kipy_pcb, "list_footprints", lambda: [
         {"reference": "R1", "value": "10k",
@@ -153,13 +173,18 @@ def test_parity_degrades_when_ipc_unavailable(monkeypatch, two_symbol_proj: Path
     The command intentionally doesn't fail here — agents still get the
     schematic side, they just can't see drift. Failing would force them
     to special-case "is KiCad open" before every parity check.
+
+    Post-#25: the IPC trip-wire moved from `list_footprints` to
+    `list_open_documents` (called first for the wrong-board guard); both
+    raise here so either branch ends in the same degradation path.
     """
     from kcd.adapters import kipy_pcb
     from kcd.core.ipc import IpcUnavailable
 
-    def raise_ipc() -> list:
+    def raise_ipc(*_args: object, **_kw: object) -> list:
         raise IpcUnavailable("KiCad not reachable")
 
+    monkeypatch.setattr(kipy_pcb, "list_open_documents", raise_ipc)
     monkeypatch.setattr(kipy_pcb, "list_footprints", raise_ipc)
 
     out = _invoke_parity(two_symbol_proj)
@@ -168,3 +193,35 @@ def test_parity_degrades_when_ipc_unavailable(monkeypatch, two_symbol_proj: Path
     assert sorted(out["data"]["schematic_only"]) == ["C1", "R1"]
     assert out["data"]["pcb_only"] == []
     assert any("KiCad not running" in w for w in out["warnings"])
+
+
+def test_parity_fails_when_wrong_board_open(monkeypatch, two_symbol_proj: Path) -> None:
+    """KiCad open with a *different* PCB → ok=False, error.code='wrong_board_open'.
+
+    Without this guard `list_footprints()` would return whatever's open and
+    parity would silently compare the requested project's schematic against
+    an unrelated PCB. Dove session-4 #25.
+    """
+    from kcd.adapters import kipy_pcb
+    monkeypatch.setattr(kipy_pcb, "list_open_documents", lambda: [
+        {"kind": "board", "path": "/elsewhere/other_project.kicad_pcb"},
+    ])
+
+    def should_not_call() -> list:
+        raise AssertionError(
+            "list_footprints should not have been called once the "
+            "wrong-board guard fires"
+        )
+
+    monkeypatch.setattr(kipy_pcb, "list_footprints", should_not_call)
+
+    # Failure-path invocation — `_invoke_parity` asserts exit 0, but a clean
+    # envelope failure exits 1 by design. Read the JSON directly.
+    runner = CliRunner()
+    result = runner.invoke(_parity_app, [str(two_symbol_proj), "--json"])
+    assert result.exit_code == 1, f"expected exit 1 (envelope failure), got {result.exit_code}"
+    out = json.loads(result.stdout)
+    assert out["ok"] is False
+    assert out["error"]["code"] == "wrong_board_open"
+    assert "other_project.kicad_pcb" in out["error"]["message"]
+    assert str(two_symbol_proj / "demo.kicad_pcb") in out["error"]["message"]

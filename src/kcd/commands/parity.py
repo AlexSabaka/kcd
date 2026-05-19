@@ -22,11 +22,13 @@ Foundation for the EE/PCB-review skill Dove flagged in session 4 (#22).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import typer
 
 from kcd.adapters import skip_sch
 from kcd.core.ipc import IpcUnavailable
-from kcd.core.output import run_command
+from kcd.core.output import CommandError, run_command
 from kcd.core.project import resolve
 
 
@@ -55,6 +57,24 @@ def parity_cmd(
 
         try:
             from kcd.adapters import kipy_pcb
+            # Verify KiCad has *this* board open, not a different one.
+            # `list_footprints()` returns whatever board is active in
+            # KiCad's editor; without this guard, parity against project A
+            # while KiCad has project B open would silently compare A's
+            # schematic against B's PCB. Dove session-4 #25.
+            open_docs = kipy_pcb.list_open_documents()
+            open_boards = [d for d in open_docs if d.get("kind") == "board" and d.get("path")]
+            if open_boards:
+                expected = proj.pcb.resolve()
+                if not any(Path(b["path"]).resolve() == expected for b in open_boards):
+                    paths = ", ".join(b["path"] for b in open_boards)
+                    raise CommandError(
+                        "wrong_board_open",
+                        f"KiCad has {paths} open, not the requested "
+                        f"{proj.pcb}. Switch KiCad to the right PCB and "
+                        "retry, or run with KiCad closed for a "
+                        "schematic-only listing.",
+                    )
             pcb_fps = kipy_pcb.list_footprints()
         except IpcUnavailable:
             # No PCB available — return a partial result rather than fail.
