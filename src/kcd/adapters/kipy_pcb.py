@@ -9,6 +9,7 @@ API reference: https://docs.kicad.org/kicad-python-main/board.html
 
 from __future__ import annotations
 
+import re
 from pathlib import Path as _Path
 from typing import Any
 
@@ -151,6 +152,12 @@ def list_footprints() -> list[dict[str, Any]]:
             "x_mm": _nm_to_mm(x_nm),
             "y_mm": _nm_to_mm(y_nm),
         })
+    # KiCad's internal order isn't stable: modifying a footprint pushes it
+    # to the head of get_footprints(). Diffing two `inspect pcb` outputs to
+    # find "what changed" then becomes noise. Sort by reference designator
+    # with numeric-suffix awareness so R1, R2, R10 land in agent-friendly
+    # order (not R1, R10, R2). Dove session-3 #19.
+    out.sort(key=lambda fp: _ref_sort_key(fp["reference"]))
     return out
 
 
@@ -330,6 +337,23 @@ def _net_name(track: Any) -> str:
         return track.net.name
     except Exception:
         return ""
+
+
+_REF_SORT_RE = re.compile(r"^([A-Za-z_]+)(\d+)(.*)$")
+
+
+def _ref_sort_key(ref: str) -> tuple[str, int, str]:
+    """Numeric-suffix-aware sort key for reference designators.
+
+    `R1, R2, R10` instead of `R1, R10, R2`. Mixed-prefix sorts by prefix
+    first (so all Cs land before all Rs, regardless of number). Refs that
+    don't match the standard `<letters><digits><suffix?>` shape sort to
+    the bottom via the `"~"` prefix (greater than ascii letters).
+    """
+    m = _REF_SORT_RE.match(ref or "")
+    if m:
+        return (m.group(1), int(m.group(2)), m.group(3))
+    return ("~" + (ref or ""), 0, "")
 
 
 def _nm_to_mm(nm: int) -> float:
