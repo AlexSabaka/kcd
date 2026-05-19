@@ -98,6 +98,19 @@ def restore(
             kipy_pcb.revert_board()
             payload["kicad_reverted"] = True
         except IpcUnavailable:
+            # File reverted, but KiCad isn't reachable to sync its memory.
+            # This is the silent-corruption path: an agent that runs a
+            # mutating IPC command next (`move-fp`) will write stale KiCad
+            # memory on top of the just-restored file. Surface it as a
+            # warning so the agent sees the hazard even without inspecting
+            # `data.kicad_reverted` (Dove session-4 #21).
+            r.warn(
+                "Snapshot file reverted but KiCad's in-memory board was not "
+                "synced (KiCad not running with PCB open). The next mutating "
+                "IPC command may overwrite the restored file with stale "
+                "KiCad memory. Reload the .kicad_pcb in KiCad before "
+                "continuing, or close the editor entirely."
+            )
             payload["kicad_reverted"] = False
         except Exception as e:  # noqa: BLE001
             r.warn(

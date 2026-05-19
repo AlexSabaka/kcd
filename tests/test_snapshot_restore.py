@@ -55,11 +55,13 @@ def _invoke_restore(proj_dir: Path) -> dict:
     return json.loads(result.stdout)
 
 
-def test_restore_when_kicad_unavailable_is_silent(monkeypatch, stub_proj: Path) -> None:
-    """IpcUnavailable from revert_board → kicad_reverted=False, no warning.
+def test_restore_when_kicad_unavailable_warns(monkeypatch, stub_proj: Path) -> None:
+    """IpcUnavailable from revert_board → kicad_reverted=False *with* a warning.
 
-    Reason: if KiCad isn't open, there is no in-memory state to desync; the
-    disk is already correct. Warning here would be noise on the common path.
+    Dove session-4 #21: an agent that doesn't unpack `data.kicad_reverted` and
+    runs a mutating IPC command next will overwrite the restored file with
+    stale KiCad memory. The warning surfaces that hazard at envelope level so
+    no consumer is silently exposed.
     """
     from kcd.adapters import kipy_pcb
     from kcd.core.ipc import IpcUnavailable
@@ -72,7 +74,8 @@ def test_restore_when_kicad_unavailable_is_silent(monkeypatch, stub_proj: Path) 
     out = _invoke_restore(stub_proj)
     assert out["ok"] is True
     assert out["data"]["kicad_reverted"] is False
-    assert out["warnings"] == []
+    assert any("not synced" in w for w in out["warnings"])
+    assert any("Reload the .kicad_pcb" in w for w in out["warnings"])
 
 
 def test_restore_when_revert_succeeds_marks_reverted(monkeypatch, stub_proj: Path) -> None:
