@@ -8,6 +8,7 @@ from __future__ import annotations
 import typer
 
 from kcd import __version__
+from kcd.commands.analyze import analyze_app
 from kcd.commands.drc import drc_cmd, erc_cmd
 from kcd.commands.edit import edit_app
 from kcd.commands.export import export_app
@@ -45,6 +46,7 @@ app.add_typer(edit_app, name="edit")
 app.add_typer(net_app, name="net")
 app.add_typer(export_app, name="export")
 app.add_typer(route_app, name="route")
+app.add_typer(analyze_app, name="analyze")
 
 # Flat top-level commands (frequent enough to deserve a short path)
 app.command("drc")(drc_cmd)
