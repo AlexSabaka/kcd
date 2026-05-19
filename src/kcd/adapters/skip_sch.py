@@ -231,6 +231,55 @@ def _fallback_sheet_index(proj: Project) -> list[dict[str, Any]]:
     }]
 
 
+def locate(proj: Project, reference: str) -> tuple[Path, str]:
+    """Find which sheet in `proj` contains `reference`.
+
+    Walks the project's sheets in page order (via `sheet_index`), tries
+    `find_symbol` on each `.kicad_sch` file, returns
+    ``(sheet_path, sheet_display_name)`` for the first hit. Display name is
+    the `.kicad_pro` sheet entry name, or ``"root"`` for page 1.
+
+    Without this, the schematic edit + inspect surface was blind to anything
+    living outside `proj.sch` — `inspect ref C7` on `pic_programmer` reported
+    "not found" even though C7 sits on the `pic_sockets` sub-sheet
+    (Dove session-3 #20).
+
+    Raises:
+        SchEditError: No sheet in the project contains the reference.
+    """
+    for entry in sheet_index(proj):
+        path = entry["file"]
+        if path is None:
+            continue
+        try:
+            find_symbol(path, reference)
+        except SchEditError:
+            continue
+        return path, (entry["name"] or "root")
+    raise SchEditError(
+        f"Symbol {reference!r} not found in any sheet of {proj.name}"
+    )
+
+
+def list_symbols_all(proj: Project) -> list[dict[str, Any]]:
+    """List every symbol on every sheet of `proj`, each tagged with its sheet.
+
+    Aggregates `list_symbols` across the project in page order. Each
+    returned dict gains a ``sheet`` key with the `.kicad_pro` display name
+    (``"root"`` for page 1). Backbone for board-wide BOM / sourcing
+    workflows that previously stopped at the root sheet.
+    """
+    out: list[dict[str, Any]] = []
+    for entry in sheet_index(proj):
+        path = entry["file"]
+        if path is None:
+            continue
+        for sym in list_symbols(path):
+            sym["sheet"] = entry["name"] or "root"
+            out.append(sym)
+    return out
+
+
 def snapshot_sheet_mtimes(proj: Project) -> dict[Path, int]:
     """Capture mtime_ns of every .kicad_sch in the project root.
 

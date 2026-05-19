@@ -135,7 +135,10 @@ def value(
     with run_command("edit.value", json_) as r:
         proj, r.snapshot_before = _pre_edit(project, f"edit value {ref}={new_value}", no_snapshot)
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
-        r.data = {"updated": skip_sch.set_value(proj.sch, ref, new_value)}
+        sheet_path, sheet_name = skip_sch.locate(proj, ref)
+        updated = skip_sch.set_value(sheet_path, ref, new_value)
+        updated["sheet"] = sheet_name
+        r.data = {"updated": updated}
         _post_edit_sch(proj, r, mtimes, no_render=no_render)
 
 
@@ -152,7 +155,10 @@ def ref_cmd(
     with run_command("edit.ref", json_) as r:
         proj, r.snapshot_before = _pre_edit(project, f"rename {old} -> {new}", no_snapshot)
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
-        r.data = {"updated": skip_sch.set_reference(proj.sch, old, new)}
+        sheet_path, sheet_name = skip_sch.locate(proj, old)
+        updated = skip_sch.set_reference(sheet_path, old, new)
+        updated["sheet"] = sheet_name
+        r.data = {"updated": updated}
         _post_edit_sch(proj, r, mtimes, no_render=no_render)
 
 
@@ -169,7 +175,10 @@ def footprint(
     with run_command("edit.footprint", json_) as r:
         proj, r.snapshot_before = _pre_edit(project, f"footprint {ref}={fp}", no_snapshot)
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
-        r.data = {"updated": skip_sch.set_footprint(proj.sch, ref, fp)}
+        sheet_path, sheet_name = skip_sch.locate(proj, ref)
+        updated = skip_sch.set_footprint(sheet_path, ref, fp)
+        updated["sheet"] = sheet_name
+        r.data = {"updated": updated}
         _post_edit_sch(proj, r, mtimes, no_render=no_render)
 
 
@@ -187,8 +196,11 @@ def prop(
     with run_command("edit.prop", json_) as r:
         proj, r.snapshot_before = _pre_edit(project, f"prop {ref}.{field}={value}", no_snapshot)
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
+        sheet_path, sheet_name = skip_sch.locate(proj, ref)
+        updated = skip_sch.set_property(sheet_path, ref, field, value)
+        updated["sheet"] = sheet_name
         r.data = {
-            "updated": skip_sch.set_property(proj.sch, ref, field, value),
+            "updated": updated,
             "field": field,
             "value": value,
         }
@@ -207,7 +219,10 @@ def delete(
     with run_command("edit.delete", json_) as r:
         proj, r.snapshot_before = _pre_edit(project, f"delete {ref}", no_snapshot)
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
-        r.data = {"deleted": skip_sch.delete_symbol(proj.sch, ref)}
+        sheet_path, sheet_name = skip_sch.locate(proj, ref)
+        deleted = skip_sch.delete_symbol(sheet_path, ref)
+        deleted["sheet"] = sheet_name
+        r.data = {"deleted": deleted}
         _post_edit_sch(proj, r, mtimes, no_render=no_render)
 
 

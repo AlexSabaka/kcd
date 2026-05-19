@@ -17,12 +17,17 @@ def sch(
     project: str = typer.Argument(...),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
-    """List all symbols in the schematic with reference, value, and footprint."""
+    """List all symbols across every sheet of the schematic.
+
+    Each symbol carries a `sheet` field with its home sheet's display name —
+    `"root"` for page 1, or the `.kicad_pro` sheet name for sub-sheets. Was
+    previously root-sheet-only; hierarchical designs lost everything below.
+    """
     with run_command("inspect.sch", json_) as r:
         proj = resolve(project)
         r.data = {
             "project": proj.name,
-            "symbols": skip_sch.list_symbols(proj.sch),
+            "symbols": skip_sch.list_symbols_all(proj),
         }
 
 
@@ -97,7 +102,9 @@ def ref(
     enriches with PCB info if KiCad is open."""
     with run_command("inspect.ref", json_) as r:
         proj = resolve(project)
-        sch_info = skip_sch.find_symbol(proj.sch, reference)
+        sheet_path, sheet_name = skip_sch.locate(proj, reference)
+        sch_info = skip_sch.find_symbol(sheet_path, reference)
+        sch_info["sheet"] = sheet_name
         payload: dict = {"reference": reference, "schematic": sch_info, "pcb": None}
 
         # Try to enrich with live PCB info, but degrade gracefully — IPC being
