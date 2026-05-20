@@ -48,15 +48,16 @@ def sch(
 def pcb(
     project: str = typer.Argument(...),
     out: Path = typer.Option(..., "-o", "--out"),
-    format_: str = typer.Option("svg", "-f", "--format", help="svg | pdf"),
+    format_: str = typer.Option("svg", "-f", "--format", help="svg | pdf | png"),
     layers: str = typer.Option(
         "F.Cu,B.Cu,F.SilkS,B.SilkS,Edge.Cuts",
         "--layers",
         help="Comma-separated layer names",
     ),
+    dpi: int = typer.Option(300, "--dpi", help="DPI for PNG rasterization"),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Render PCB layers to SVG or PDF."""
+    """Render PCB layers to SVG, PDF, or PNG (flat 2D layer view)."""
     with run_command("render.pcb", json_) as r:
         cfg = cfg_mod.load()
         proj = resolve(project)
@@ -68,8 +69,15 @@ def pcb(
         elif fmt == "pdf":
             kicad_cli.export_pcb_pdf(cfg.kicad_cli, proj.pcb, out, layers=layer_list)
             r.add_artifact("pcb_pdf", str(out), layers=layer_list)
+        elif fmt == "png":
+            kicad_cli.export_pcb_png(
+                cfg.kicad_cli, proj.pcb, out, layers=layer_list, dpi=dpi
+            )
+            r.add_artifact("pcb_png", str(out), layers=layer_list, dpi=dpi)
         else:
-            raise CommandError("invalid_format", f"Unknown format {format_!r}; use svg or pdf")
+            raise CommandError(
+                "invalid_format", f"Unknown format {format_!r}; use svg, pdf, or png"
+            )
         r.data = {"project": proj.name, "format": fmt, "layers": layer_list}
 
 

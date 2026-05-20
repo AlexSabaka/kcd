@@ -90,6 +90,37 @@ def export_sch_pdf(cli: str, sch: Path, out: Path) -> Path:
     return out
 
 
+def _rasterize_svg(svg: Path, out: Path, dpi: int) -> None:
+    """Rasterize an SVG to PNG via rsvg-convert, falling back to inkscape.
+
+    kicad-cli has no direct PNG export for schematics or flat 2D boards, so
+    PNG output goes via SVG + an external rasterizer. Raises `CliError` when
+    neither tool is on PATH.
+    """
+    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            ["rsvg-convert", "-d", str(dpi), "-p", str(dpi),
+             "-o", str(out), str(svg)],
+            check=True, capture_output=True, text=True,
+        )
+        return
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+    try:
+        subprocess.run(
+            ["inkscape", "--export-type=png", f"--export-dpi={dpi}",
+             f"--export-filename={out}", str(svg)],
+            check=True, capture_output=True, text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        raise CliError(
+            ["png-rasterize"], 1, "",
+            "Neither rsvg-convert nor inkscape found on PATH for PNG "
+            "rasterization. Install one, or use --format svg/pdf."
+        ) from e
+
+
 def export_sch_png(cli: str, sch: Path, out: Path, dpi: int = 300) -> Path:
     """Export schematic to PNG.
 
@@ -105,26 +136,7 @@ def export_sch_png(cli: str, sch: Path, out: Path, dpi: int = 300) -> Path:
     svgs = sorted(svg_dir.glob("*.svg"))
     if not svgs:
         raise CliError(["sch", "export", "svg"], 1, "", "no SVG produced")
-    # Convert with rsvg-convert if available; else fall back to a warning.
-    try:
-        subprocess.run(
-            ["rsvg-convert", "-d", str(dpi), "-p", str(dpi), "-o", str(out), str(svgs[0])],
-            check=True, capture_output=True, text=True,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        # Last-ditch: try inkscape
-        try:
-            subprocess.run(
-                ["inkscape", "--export-type=png", f"--export-dpi={dpi}",
-                 f"--export-filename={out}", str(svgs[0])],
-                check=True, capture_output=True, text=True,
-            )
-        except (FileNotFoundError, subprocess.CalledProcessError) as e:
-            raise CliError(
-                ["png-rasterize"], 1, "",
-                "Neither rsvg-convert nor inkscape found on PATH for PNG rasterization. "
-                "Install one, or use --format svg/pdf."
-            ) from e
+    _rasterize_svg(svgs[0], out, dpi)
     return out
 
 
@@ -165,6 +177,23 @@ def export_pcb_svg(cli: str, pcb: Path, out: Path, layers: list[str] | None = No
         args.extend(["--layers", ",".join(layers)])
     args.append(str(pcb))
     _run(cli, *args)
+    return out
+
+
+def export_pcb_png(
+    cli: str, pcb: Path, out: Path,
+    layers: list[str] | None = None, dpi: int = 300,
+) -> Path:
+    """Export PCB layers to a flat 2D PNG — exports SVG, then rasterizes.
+
+    kicad-cli has no direct flat-2D PNG export for boards (`pcb render` is the
+    photorealistic 3D view, which hides copper under soldermask). For an agent
+    that needs to *see* the copper/silk layers, this rasterizes the layered SVG.
+    """
+    out.parent.mkdir(parents=True, exist_ok=True)
+    svg = out.parent / f".{out.stem}.svg"
+    export_pcb_svg(cli, pcb, svg, layers=layers)
+    _rasterize_svg(svg, out, dpi)
     return out
 
 

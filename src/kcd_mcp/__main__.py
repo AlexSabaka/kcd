@@ -20,9 +20,10 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 
 mcp = FastMCP("kcd")
 
@@ -741,28 +742,93 @@ def kcd_lib_list(project: str | None = None) -> dict[str, Any]:
 # render
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
-def kcd_render_sch(project: str, out: str, fmt: str = "svg") -> dict[str, Any]:
-    """Render the schematic to a file. fmt: svg | png | pdf.
+# An inline preview image must stay under the 1MB MCP result cap. A PNG at the
+# 150-dpi preview resolution is comfortably below this; the guard skips
+# inlining (rather than hard-failing the whole tool call) on the rare overrun.
+_IMAGE_CAP = 900_000
 
+
+def _render_preview(args: list[str]) -> str | None:
+    """Render a low-res PNG preview to a temp file; return its path or None.
+
+    `args` is a `kcd render ...` arg list *without* `--out`. Used so the agent
+    receives an inline image even when it asked for an SVG/PDF on disk.
+    """
+    fd, tmp = tempfile.mkstemp(suffix=".png", prefix="kcd-preview-")
+    os.close(fd)
+    env = _run([*args, "--out", tmp])
+    if env.get("ok") and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+        return tmp
+    return None
+
+
+def _attach_image(env: dict[str, Any], png_path: str | None) -> Any:
+    """Return `[envelope, Image]` when a usable PNG exists, else the envelope.
+
+    In MCP-remote operation the agent never sees a render written to the
+    operator's disk; returning the bytes as an `ImageContent` block is the
+    only way it can see its own render (Round-3 field report B3).
+    """
+    if not png_path or not os.path.isfile(png_path):
+        return env
+    size = os.path.getsize(png_path)
+    if size == 0:
+        return env
+    if size > _IMAGE_CAP:
+        env.setdefault("warnings", []).append(
+            f"render preview is {size} bytes — too large to inline; "
+            "open the artifact path on the operator's disk instead."
+        )
+        return env
+    with open(png_path, "rb") as fh:
+        raw = fh.read()
+    return [env, Image(data=raw, format="png")]
+
+
+@mcp.tool(structured_output=False)
+def kcd_render_sch(project: str, out: str, fmt: str = "svg") -> Any:
+    """Render the schematic and return an inline PNG preview.
+
+    fmt: svg | png | pdf — written to `out` on disk. An inline PNG preview is
+    also returned so the agent can see the render directly.
     PNG rasterization needs rsvg-convert or inkscape on PATH.
     """
-    return _run(["render", "sch", project, "--out", out, "--format", fmt])
+    env = _run(["render", "sch", project, "--out", out, "--format", fmt])
+    if not env.get("ok"):
+        return env
+    preview = out if fmt == "png" else _render_preview(
+        ["render", "sch", project, "--format", "png", "--dpi", "150"]
+    )
+    return _attach_image(env, preview)
 
 
-@mcp.tool()
-def kcd_render_pcb(project: str, out: str, fmt: str = "svg") -> dict[str, Any]:
-    """Render the PCB to a file. fmt: svg | pdf."""
-    return _run(["render", "pcb", project, "--out", out, "--format", fmt])
+@mcp.tool(structured_output=False)
+def kcd_render_pcb(project: str, out: str, fmt: str = "svg") -> Any:
+    """Render the PCB (flat 2D layer view) and return an inline PNG preview.
 
-
-@mcp.tool()
-def kcd_render_3d(project: str, out: str, side: str = "top") -> dict[str, Any]:
-    """Render a photorealistic 3D image of the PCB to a file.
-
-    `side`: top | bottom | front | back | left | right.
+    fmt: svg | pdf | png — written to `out` on disk. An inline PNG preview is
+    also returned so the agent can see the render directly.
     """
-    return _run(["render", "3d", project, "--out", out, "--side", side])
+    env = _run(["render", "pcb", project, "--out", out, "--format", fmt])
+    if not env.get("ok"):
+        return env
+    preview = out if fmt == "png" else _render_preview(
+        ["render", "pcb", project, "--format", "png", "--dpi", "150"]
+    )
+    return _attach_image(env, preview)
+
+
+@mcp.tool(structured_output=False)
+def kcd_render_3d(project: str, out: str, side: str = "top") -> Any:
+    """Render a photorealistic 3D image of the PCB and return it inline.
+
+    `side`: top | bottom | front | back | left | right. The render is written
+    to `out` on disk and also returned as an inline image.
+    """
+    env = _run(["render", "3d", project, "--out", out, "--side", side])
+    if not env.get("ok"):
+        return env
+    return _attach_image(env, out)
 
 
 # ---------------------------------------------------------------------------

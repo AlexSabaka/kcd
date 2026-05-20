@@ -182,6 +182,16 @@ Initial alpha release.
   added/removed via `git diff --numstat`); a small diff body still rides
   inline, a large one spills to the artifact, which always holds the
   complete unified diff. Round-3 field report B4.
+- `kcd_render_sch` / `kcd_render_pcb` / `kcd_render_3d` MCP tools now return
+  the render as an inline image. They previously returned only an artifact
+  *path* on the operator's filesystem — in MCP-remote operation the agent
+  could never see its own render. Each wrapper now returns a PNG image
+  content block alongside the JSON envelope (capped to stay under the 1MB
+  MCP result limit; an oversize preview is skipped with a warning rather
+  than failing the call). `kcd render pcb` gains a `png` format — a flat 2D
+  layer view rasterized from SVG via rsvg-convert/inkscape — so the PCB
+  preview shows copper, not a soldermask-covered 3D view. Round-3 field
+  report B3.
 
 ### Known limitations
 - Diff-pair length tuning: not implemented
