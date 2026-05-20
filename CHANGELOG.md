@@ -93,7 +93,13 @@ Initial alpha release.
   the skill body is `skills/kicad/SKILL.md` — rewritten so the skill drives
   entirely through `kcd` commands and runs in MCP-only environments — with
   reference docs under `skills/kicad/references/`.
-- `kcd drc` / `kcd erc` — design and electrical rule checks via kicad-cli
+- `kcd drc` / `kcd erc` — design and electrical rule checks via kicad-cli.
+  The report is folded for token efficiency: violations group by
+  `(type, severity)` into `data.violations[]`, each group carrying a true
+  `count` and a 3-occurrence `shown` sample; item positions compact to
+  `at:[x,y]` and uuids drop from the inline envelope. `--full` inlines every
+  occurrence; the artifact file always holds the complete report (uuids
+  retained). A ~200-violation board drops from ~45K tokens inline to ~6K
 - `kcd route track` — single-track routing via kipy IPC
 - `kcd route freeroute` — FreeRouting orchestration via .dsn/.ses round-trip
 - `kcd export gerber|drill|bom|step|pos|pdf` — manufacturing file exports

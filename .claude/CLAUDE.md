@@ -160,8 +160,8 @@ kcd edit zone add     <proj> --net N --layer L --rect X1,Y1,X2,Y2 [--priority P]
 kcd edit zone delete  <proj> [--net N] [--layer L] [--json]
 
 # Validate
-kcd drc    <proj> [--json]
-kcd erc    <proj> [--json]
+kcd drc    <proj> [--full] [--json]   # violations folded by (type,severity); --full = every occurrence inline
+kcd erc    <proj> [--full] [--json]
 kcd parity <proj> [--json]                       # schematic ↔ PCB ref drift
 kcd sync   <proj> [--check] [--json]             # export netlist; --check diffs vs live PCB
 
