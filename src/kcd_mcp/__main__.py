@@ -1108,7 +1108,7 @@ def kcd_export_bom(project: str, out: str) -> dict[str, Any]:
 
 @mcp.tool()
 def kcd_export_gerber(project: str, out: str) -> dict[str, Any]:
-    """Export Gerber manufacturing files to a directory."""
+    """Export a complete fab package — Gerber layers plus drill files — to a directory."""
     return _run(["export", "gerber", project, "--out", out])
 
 

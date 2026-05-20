@@ -230,6 +230,12 @@ Initial alpha release.
   If resvg ever fails on a specific SVG, `render sch|pcb --format png`
   degrades to emitting the SVG with a warning instead of failing the
   command. Round-4 field report B3-B.
+- `kcd export gerber` now ships a complete fab package. It exported only the
+  copper/silk gerbers; drill files were a separate `export drill` call, so an
+  agent running `export gerber` to "make the fab package" produced a set the
+  fab rejects — with no warning. `export gerber` now also writes the drill
+  files into the same directory (`data.drill_included: true`); the standalone
+  `export drill` stays for drill-only exports. Round-5 field report R5-4.
 
 ### Known limitations
 - Diff-pair length tuning: not implemented

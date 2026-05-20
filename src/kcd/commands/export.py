@@ -20,13 +20,19 @@ def gerber(
     out: Path = typer.Option(..., "-o", "--out", help="Output directory"),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Export Gerber files."""
+    """Export a complete fab package — Gerber layers plus drill files.
+
+    Drill files go into the same directory: a fab house rejects a gerber set
+    with no drills, so `export gerber` ships the whole package. Use the
+    standalone `export drill` only when you want drills on their own.
+    """
     with run_command("export.gerber", json_) as r:
         cfg = cfg_mod.load()
         proj = resolve(project)
         kicad_cli.export_gerber(cfg.kicad_cli, proj.pcb, out)
+        kicad_cli.export_drill(cfg.kicad_cli, proj.pcb, out)
         r.add_artifact("gerber_dir", str(out))
-        r.data = {"project": proj.name, "out_dir": str(out)}
+        r.data = {"project": proj.name, "out_dir": str(out), "drill_included": True}
 
 
 @export_app.command("drill")
