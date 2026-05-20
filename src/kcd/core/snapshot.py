@@ -109,6 +109,23 @@ class SnapshotStore:
         sha = self._git("rev-parse", "HEAD").stdout.strip()
         return self._info_for(sha)
 
+    def drop(self, ref: str) -> None:
+        """Discard a snapshot created by `create()`, if it is still HEAD.
+
+        Used to undo an auto-snapshot taken before a mutation that then
+        failed: the pre-edit state was real, but a snapshot for an edit that
+        never landed is just history noise. Moves the snapshot branch back
+        one commit (`--soft`, so the working tree is untouched). A no-op
+        when `ref` is no longer HEAD, so it can never clobber a newer
+        snapshot.
+        """
+        if not (self.git_dir.exists() and (self.git_dir / "HEAD").exists()):
+            return
+        head = self._git("rev-parse", "HEAD").stdout.strip()
+        if head != ref:
+            return
+        self._git("reset", "--soft", "HEAD~1")
+
     def restore(self, ref: str) -> SnapshotInfo:
         """Hard-reset the working tree to `ref`. Destructive within the project."""
         self._ensure_init()

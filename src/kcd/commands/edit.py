@@ -21,12 +21,18 @@ edit_app = typer.Typer(help="Mutating operations. Auto-snapshot before, auto-ren
 
 
 def _pre_edit(
+    r: Result,
     project_arg: str | None,
     msg: str,
     no_snapshot: bool,
     auto: bool = False,
-) -> tuple[Project, str | None]:
-    """Resolve project + take a pre-edit snapshot. Returns (project, snapshot ref or None).
+) -> Project:
+    """Resolve the project and take a pre-edit snapshot.
+
+    Records the snapshot ref on `r.snapshot_before`, and arms
+    `r._snapshot_rollback` so `run_command` can discard that snapshot if the
+    command then fails — a snapshot for a mutation that never landed is just
+    history noise (Round-2 field report bug #5).
 
     `auto=True` lets the caller omit `project_arg` and have us derive the
     active project from KiCad's open board (for IPC-only commands).
@@ -36,12 +42,12 @@ def _pre_edit(
     """
     cfg = cfg_mod.load()
     proj = resolve_or_active(project_arg) if auto else resolve(project_arg)
-    snap_ref: str | None = None
     if cfg.auto_snapshot and not no_snapshot:
         store = SnapshotStore(proj, dir_name=cfg.snapshot_dir_name)
         info = store.create(f"before: {msg}")
-        snap_ref = info.ref
-    return proj, snap_ref
+        r.snapshot_before = info.ref
+        r._snapshot_rollback = lambda: store.drop(info.ref)
+    return proj
 
 
 def _post_edit_sch(
@@ -133,7 +139,7 @@ def value(
 ) -> None:
     """Change a symbol's Value field in the schematic."""
     with run_command("edit.value", json_) as r:
-        proj, r.snapshot_before = _pre_edit(project, f"edit value {ref}={new_value}", no_snapshot)
+        proj = _pre_edit(r, project, f"edit value {ref}={new_value}", no_snapshot)
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
         sheet_path, sheet_name = skip_sch.locate(proj, ref)
         updated = skip_sch.set_value(sheet_path, ref, new_value)
@@ -153,7 +159,7 @@ def ref_cmd(
 ) -> None:
     """Rename a symbol's reference designator."""
     with run_command("edit.ref", json_) as r:
-        proj, r.snapshot_before = _pre_edit(project, f"rename {old} -> {new}", no_snapshot)
+        proj = _pre_edit(r, project, f"rename {old} -> {new}", no_snapshot)
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
         sheet_path, sheet_name = skip_sch.locate(proj, old)
         updated = skip_sch.set_reference(sheet_path, old, new)
@@ -173,7 +179,7 @@ def footprint(
 ) -> None:
     """Set a symbol's Footprint property."""
     with run_command("edit.footprint", json_) as r:
-        proj, r.snapshot_before = _pre_edit(project, f"footprint {ref}={fp}", no_snapshot)
+        proj = _pre_edit(r, project, f"footprint {ref}={fp}", no_snapshot)
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
         sheet_path, sheet_name = skip_sch.locate(proj, ref)
         updated = skip_sch.set_footprint(sheet_path, ref, fp)
@@ -194,7 +200,7 @@ def prop(
 ) -> None:
     """Set or create an arbitrary property on a symbol."""
     with run_command("edit.prop", json_) as r:
-        proj, r.snapshot_before = _pre_edit(project, f"prop {ref}.{field}={value}", no_snapshot)
+        proj = _pre_edit(r, project, f"prop {ref}.{field}={value}", no_snapshot)
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
         sheet_path, sheet_name = skip_sch.locate(proj, ref)
         updated = skip_sch.set_property(sheet_path, ref, field, value)
@@ -217,7 +223,7 @@ def delete(
 ) -> None:
     """Delete a symbol from the schematic."""
     with run_command("edit.delete", json_) as r:
-        proj, r.snapshot_before = _pre_edit(project, f"delete {ref}", no_snapshot)
+        proj = _pre_edit(r, project, f"delete {ref}", no_snapshot)
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
         sheet_path, sheet_name = skip_sch.locate(proj, ref)
         deleted = skip_sch.delete_symbol(sheet_path, ref)
@@ -274,7 +280,8 @@ def wire_add(
     """Add a wire segment between two points on the root schematic sheet."""
     with run_command("edit.wire.add", json_) as r:
         start, end = _parse_xy(from_), _parse_xy(to)
-        proj, r.snapshot_before = _pre_edit(
+        proj = _pre_edit(
+            r,
             project, f"add wire {from_} -> {to}", no_snapshot
         )
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
@@ -294,7 +301,8 @@ def wire_delete(
     """Delete the wire with the given endpoints (either direction)."""
     with run_command("edit.wire.delete", json_) as r:
         start, end = _parse_xy(from_), _parse_xy(to)
-        proj, r.snapshot_before = _pre_edit(
+        proj = _pre_edit(
+            r,
             project, f"delete wire {from_} -> {to}", no_snapshot
         )
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
@@ -316,7 +324,8 @@ def netlabel_add(
     """Add a local or global net label on the root schematic sheet."""
     with run_command("edit.netlabel.add", json_) as r:
         pos = _parse_xy(at)
-        proj, r.snapshot_before = _pre_edit(
+        proj = _pre_edit(
+            r,
             project, f"add label {text}", no_snapshot
         )
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
@@ -336,7 +345,8 @@ def netlabel_delete(
     """Delete a net label by text (use --at when several share the name)."""
     with run_command("edit.netlabel.delete", json_) as r:
         pos = _parse_xy(at) if at else None
-        proj, r.snapshot_before = _pre_edit(
+        proj = _pre_edit(
+            r,
             project, f"delete label {text}", no_snapshot
         )
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
@@ -374,7 +384,8 @@ def add_symbol(
             )
         like = next((s["reference"] for s in symbols if s.get("lib_id") == lib_id), None)
 
-        _, r.snapshot_before = _pre_edit(
+        _pre_edit(
+            r,
             project, f"add symbol {ref} ({lib_id})", no_snapshot
         )
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
@@ -458,7 +469,8 @@ def swap_symbol(
                 )
 
         wired_before = {tuple(p) for p in before["wired_positions"]}
-        _, r.snapshot_before = _pre_edit(
+        _pre_edit(
+            r,
             project, f"swap {ref} -> {to_lib_id}", no_snapshot
         )
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
@@ -543,7 +555,8 @@ def rename_net(
             except (CommandError, FileNotFoundError, LookupError):
                 power_def = None
 
-        _, r.snapshot_before = _pre_edit(
+        _pre_edit(
+            r,
             project, f"rename net {old} -> {new}", no_snapshot
         )
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
@@ -651,7 +664,8 @@ def text_titleblock(
     """
     with run_command("edit.text.titleblock", json_) as r:
         fld, comment_no = _parse_titleblock_field(field)
-        proj, r.snapshot_before = _pre_edit(
+        proj = _pre_edit(
+            r,
             project, f"titleblock {field}={value}", no_snapshot
         )
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
@@ -679,7 +693,8 @@ def text_set(
     """
     with run_command("edit.text.set", json_) as r:
         pos = _parse_xy(at) if at else None
-        proj, r.snapshot_before = _pre_edit(
+        proj = _pre_edit(
+            r,
             project, f"set text {match} -> {to}", no_snapshot
         )
         mtimes = skip_sch.snapshot_sheet_mtimes(proj)
@@ -735,7 +750,8 @@ def designrules(
                 "will overwrite this change on its next save unless it "
                 "reloads the .kicad_pro file first."
             )
-        _proj, r.snapshot_before = _pre_edit(
+        _proj = _pre_edit(
+            r,
             project, f"designrule {rule}={value}", no_snapshot
         )
         r.data = {"updated": kicad_pro.set_design_rule(proj.pro, rule, value)}
@@ -767,7 +783,8 @@ def move_fp(
     a blanket advisory. Save or revert in the editor before running.
     """
     with run_command("edit.move-fp", json_) as r:
-        _proj, r.snapshot_before = _pre_edit(
+        _proj = _pre_edit(
+            r,
             project, f"move {ref} to {x},{y}mm", no_snapshot, auto=True
         )
         r.warn(
@@ -801,7 +818,8 @@ def delete_fp(
     Note: calls board.save() — see the warning emitted on every run.
     """
     with run_command("edit.delete-fp", json_) as r:
-        proj, r.snapshot_before = _pre_edit(
+        proj = _pre_edit(
+            r,
             project, f"delete footprint {ref}", no_snapshot, auto=True
         )
         r.warn(_BOARD_SAVE_WARNING)
@@ -853,7 +871,8 @@ def track_delete(
     with run_command("edit.track.delete", json_) as r:
         start = _parse_xy(from_) if from_ else None
         end = _parse_xy(to) if to else None
-        proj, r.snapshot_before = _pre_edit(
+        proj = _pre_edit(
+            r,
             project, "delete track(s)", no_snapshot, auto=True
         )
         r.warn(_BOARD_SAVE_WARNING)
@@ -887,7 +906,8 @@ def track_modify(
     with run_command("edit.track.modify", json_) as r:
         start = _parse_xy(from_) if from_ else None
         end = _parse_xy(to) if to else None
-        proj, r.snapshot_before = _pre_edit(
+        proj = _pre_edit(
+            r,
             project, "modify track(s)", no_snapshot, auto=True
         )
         r.warn(_BOARD_SAVE_WARNING)
@@ -931,7 +951,8 @@ def via_add(
     """
     with run_command("edit.via.add", json_) as r:
         pos = _parse_xy(at)
-        proj, r.snapshot_before = _pre_edit(
+        proj = _pre_edit(
+            r,
             project, f"add via on {net}", no_snapshot, auto=True
         )
         r.warn(_BOARD_SAVE_WARNING)
@@ -968,7 +989,8 @@ def zone_add(
     """
     with run_command("edit.zone.add", json_) as r:
         corners = _parse_rect(rect)
-        proj, r.snapshot_before = _pre_edit(
+        proj = _pre_edit(
+            r,
             project, f"add zone on {net}", no_snapshot, auto=True
         )
         r.warn(_BOARD_SAVE_WARNING)
@@ -996,7 +1018,8 @@ def zone_delete(
     Note: calls board.save() — see the warning emitted on every run.
     """
     with run_command("edit.zone.delete", json_) as r:
-        proj, r.snapshot_before = _pre_edit(
+        proj = _pre_edit(
+            r,
             project, "delete zone(s)", no_snapshot, auto=True
         )
         r.warn(_BOARD_SAVE_WARNING)

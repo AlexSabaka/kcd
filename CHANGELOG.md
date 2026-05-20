@@ -115,6 +115,12 @@ Initial alpha release.
   and never appear on a PCB by design; listing them buried the genuine
   un-placed components under dozens of false positives. Round-2 field
   report bug #4.
+- Mutating commands no longer leave a snapshot behind when the edit fails.
+  The pre-edit snapshot is still taken before the mutation runs (so it
+  captures a real rollback point), but if the command then errors,
+  `run_command` discards that snapshot via the new `SnapshotStore.drop`
+  rather than leaving a commit for an edit that never landed. Round-2 field
+  report bug #5.
 - `kcd project current` schematic entries now carry a real filesystem `path`
   (the `.kicad_sch` file location). Previously the parser read kipy's
   `sheet_path.path_human_readable` field, which is the sheet-*hierarchy*

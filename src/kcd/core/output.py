@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -49,6 +49,12 @@ class Result:
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     snapshot_before: str | None = None
     error: dict[str, str] | None = None
+    # Armed by `_pre_edit` after it takes a pre-edit snapshot; `run_command`
+    # calls it to discard that snapshot if the command then fails. Not part
+    # of the JSON envelope.
+    _snapshot_rollback: Callable[[], None] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -136,6 +142,13 @@ def run_command(name: str, json_mode: bool) -> Iterator[Result]:
         r.fail("not_found", str(e))
     except Exception as e:  # noqa: BLE001
         r.fail("unexpected", f"{type(e).__name__}: {e}")
+    if not r.ok and r._snapshot_rollback is not None:
+        try:
+            r._snapshot_rollback()
+            r.snapshot_before = None
+        except Exception:
+            # A snapshot-rollback failure must not mask the command error.
+            pass
     emit(r, json_mode)
 
 

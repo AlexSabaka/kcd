@@ -47,6 +47,8 @@ def track(
             store = SnapshotStore(proj, dir_name=cfg.snapshot_dir_name)
             info = store.create(f"before: route track {net} {start}->{end}")
             r.snapshot_before = info.ref
+            # Discard this snapshot if the route then fails — see _pre_edit.
+            r._snapshot_rollback = lambda: store.drop(info.ref)
 
         from kcd.adapters import kipy_pcb
         r.data = {"track": kipy_pcb.add_track(
