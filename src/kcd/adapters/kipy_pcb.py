@@ -464,7 +464,8 @@ def move_footprint(reference: str, x_mm: float, y_mm: float, rotation_deg: float
             new_pos = Vector2.from_xy(_mm_to_nm(x_mm), _mm_to_nm(y_mm))
             fp.position = new_pos
             if rotation_deg is not None:
-                from kipy.common_types import Angle
+                # kipy 0.7.1 moved Angle out of common_types into geometry.
+                from kipy.geometry import Angle
                 fp.orientation = Angle.from_degrees(rotation_deg)
             board.update_items([fp])
             board.save()
@@ -478,6 +479,10 @@ def delete_footprint(expected_pcb: _Path, reference: str) -> dict[str, Any]:
     The PCB-side counterpart of `edit delete` (which is schematic-only):
     removes the whole footprint and everything in it. Intended for orphan
     board footprints that have no schematic backing.
+
+    After deletion, copper on the footprint's local nets may migrate to
+    surviving co-nets — handles to the old net names go stale. Re-query
+    `net pcb` before any further track edits on those nets.
 
     Persists via `board.save()` — see the move-fp caveat.
 
@@ -564,8 +569,9 @@ def delete_tracks(
     board = get_board()
     tracks = _match_tracks(board, net, from_mm, to_mm, layer)
     deleted = [_track_summary(t) for t in tracks]
-    board.remove_items(tracks)
-    board.save()
+    if tracks:
+        board.remove_items(tracks)
+        board.save()
     return {"deleted": deleted, "count": len(deleted)}
 
 
@@ -609,8 +615,9 @@ def modify_tracks(
             t.layer = new_layer
         if new_net is not None:
             t.net = new_net
-    board.update_items(tracks)
-    board.save()
+    if tracks:
+        board.update_items(tracks)
+        board.save()
     return {"modified": [_track_summary(t) for t in tracks], "count": len(tracks)}
 
 

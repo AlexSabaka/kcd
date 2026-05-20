@@ -86,6 +86,22 @@ def test_layer_enum_rejects_unknown_layer() -> None:
 
 
 # ---------------------------------------------------------------------------
+# move_footprint --rotation — Angle import (Round-3 field report B1)
+# ---------------------------------------------------------------------------
+
+def test_kipy_angle_import_available() -> None:
+    """`move_footprint`'s --rotation path imports `Angle` from `kipy.geometry`.
+
+    kipy 0.7.1 relocated `Angle` out of `kipy.common_types`; the stale import
+    crashed every rotate-during-move with an ImportError. This guards the
+    exact symbol + API the rotation path depends on.
+    """
+    from kipy.geometry import Angle
+
+    assert Angle.from_degrees(90.0) is not None
+
+
+# ---------------------------------------------------------------------------
 # _footprint_to_dict — library id read (Round-2 field report bug #2)
 # ---------------------------------------------------------------------------
 

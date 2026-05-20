@@ -787,14 +787,9 @@ def move_fp(
             r,
             project, f"move {ref} to {x},{y}mm", no_snapshot, auto=True
         )
-        r.warn(
-            "move-fp calls board.save() — any unsaved changes you have open "
-            "in KiCad's PCB editor are persisted along with this edit. "
-            "kipy 0.7.1 has no API to detect or skip this; save or revert in "
-            "the editor before running mutating IPC commands."
-        )
         from kcd.adapters import kipy_pcb
         r.data = {"updated": kipy_pcb.move_footprint(ref, x, y, rotation)}
+        r.warn(_BOARD_SAVE_WARNING)
 
 
 @edit_app.command("delete-fp")
@@ -815,6 +810,10 @@ def delete_fp(
     schematic↔PCB drift kcd can't reconcile (KiCad 10 exposes no headless
     forward annotation); the command warns when it detects that case.
 
+    After the delete, copper on the footprint's local nets may migrate to
+    surviving co-nets — handles to the old net names go stale. Re-query
+    `net pcb` before any further track edits on those nets.
+
     Note: calls board.save() — see the warning emitted on every run.
     """
     with run_command("edit.delete-fp", json_) as r:
@@ -822,9 +821,10 @@ def delete_fp(
             r,
             project, f"delete footprint {ref}", no_snapshot, auto=True
         )
-        r.warn(_BOARD_SAVE_WARNING)
         from kcd.adapters import kipy_pcb
         result = kipy_pcb.delete_footprint(proj.pcb, ref)
+        if result.get("count", 0) > 0:
+            r.warn(_BOARD_SAVE_WARNING)
         if result.get("had_symbol"):
             r.warn(
                 f"Footprint {ref} has an associated schematic symbol — "
@@ -875,9 +875,10 @@ def track_delete(
             r,
             project, "delete track(s)", no_snapshot, auto=True
         )
-        r.warn(_BOARD_SAVE_WARNING)
         from kcd.adapters import kipy_pcb
         r.data = kipy_pcb.delete_tracks(proj.pcb, net, start, end, layer)
+        if r.data.get("count", 0) > 0:
+            r.warn(_BOARD_SAVE_WARNING)
 
 
 @track_app.command("modify")
@@ -910,12 +911,13 @@ def track_modify(
             r,
             project, "modify track(s)", no_snapshot, auto=True
         )
-        r.warn(_BOARD_SAVE_WARNING)
         from kcd.adapters import kipy_pcb
         r.data = kipy_pcb.modify_tracks(
             proj.pcb, net, start, end, layer,
             width_mm=width, set_layer=set_layer, set_net=set_net,
         )
+        if r.data.get("count", 0) > 0:
+            r.warn(_BOARD_SAVE_WARNING)
 
 
 edit_app.add_typer(track_app, name="track")
@@ -955,9 +957,9 @@ def via_add(
             r,
             project, f"add via on {net}", no_snapshot, auto=True
         )
-        r.warn(_BOARD_SAVE_WARNING)
         from kcd.adapters import kipy_pcb
         r.data = {"added": kipy_pcb.add_via(proj.pcb, net, pos, diameter, drill)}
+        r.warn(_BOARD_SAVE_WARNING)
 
 
 edit_app.add_typer(via_app, name="via")
@@ -993,11 +995,11 @@ def zone_add(
             r,
             project, f"add zone on {net}", no_snapshot, auto=True
         )
-        r.warn(_BOARD_SAVE_WARNING)
         from kcd.adapters import kipy_pcb
         r.data = {"added": kipy_pcb.add_zone(
             proj.pcb, net, layer, corners, priority, clearance
         )}
+        r.warn(_BOARD_SAVE_WARNING)
 
 
 @zone_app.command("delete")
@@ -1022,9 +1024,10 @@ def zone_delete(
             r,
             project, "delete zone(s)", no_snapshot, auto=True
         )
-        r.warn(_BOARD_SAVE_WARNING)
         from kcd.adapters import kipy_pcb
         r.data = kipy_pcb.delete_zones(proj.pcb, net, layer)
+        if r.data.get("count", 0) > 0:
+            r.warn(_BOARD_SAVE_WARNING)
 
 
 edit_app.add_typer(zone_app, name="zone")

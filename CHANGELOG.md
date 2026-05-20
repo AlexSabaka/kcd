@@ -154,6 +154,18 @@ Initial alpha release.
   layer, so MCP clients saw a frozen toolset. All 53 leaf commands are now
   exposed; a new `tests/test_mcp_parity.py` drift guard fails the build if
   the CLI and MCP tool sets ever diverge again.
+- `kcd edit move-fp --rotation` no longer crashes. The rotation path
+  imported `Angle` from `kipy.common_types`, but kipy 0.7.1 relocated the
+  class to `kipy.geometry` — every rotate-during-move died with an
+  `ImportError` (position-only moves were unaffected). Round-3 field
+  report B1.
+- Mutating PCB commands no longer emit the `board.save()` advisory on a
+  no-op. The warning fired *before* the mutation, so a `track delete` /
+  `track modify` that matched nothing still told the user their unsaved
+  editor changes had been persisted — when nothing was written. The warning
+  now fires only after a real write, and `delete_tracks` / `modify_tracks`
+  skip `board.save()` entirely when the selection is empty. Round-3 field
+  report B14.
 
 ### Known limitations
 - Diff-pair length tuning: not implemented

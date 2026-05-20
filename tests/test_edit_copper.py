@@ -52,6 +52,44 @@ def test_track_delete_envelope(proj_dir: Path, monkeypatch) -> None:
     assert any("board.save()" in w for w in out["warnings"])
 
 
+def test_track_delete_no_op_skips_board_save_warning(
+    proj_dir: Path, monkeypatch,
+) -> None:
+    """A track-delete that matches nothing writes nothing — so it must not
+    print the board.save() advisory (Round-3 B14)."""
+    monkeypatch.setattr(
+        kipy_pcb, "delete_tracks",
+        lambda *a, **k: {"deleted": [], "count": 0},
+    )
+    r = CliRunner().invoke(
+        track_app,
+        ["delete", str(proj_dir), "--net", "VCC", "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    out = json.loads(r.stdout)
+    assert out["data"]["count"] == 0
+    assert not any("board.save()" in w for w in out["warnings"])
+
+
+def test_track_modify_no_op_skips_board_save_warning(
+    proj_dir: Path, monkeypatch,
+) -> None:
+    """Same gating for `track modify` — no match, no write, no warning."""
+    monkeypatch.setattr(
+        kipy_pcb, "modify_tracks",
+        lambda *a, **k: {"modified": [], "count": 0},
+    )
+    r = CliRunner().invoke(
+        track_app,
+        ["modify", str(proj_dir), "--net", "VCC", "--width", "0.5",
+         "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    out = json.loads(r.stdout)
+    assert out["data"]["count"] == 0
+    assert not any("board.save()" in w for w in out["warnings"])
+
+
 def test_track_delete_ipc_unavailable(proj_dir: Path, monkeypatch) -> None:
     def boom(*a, **k):
         raise IpcUnavailable("KiCad not running")
