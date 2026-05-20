@@ -86,3 +86,20 @@ def test_rasterize_svg_raises_cli_error_on_bad_svg(tmp_path: Path) -> None:
     svg.write_text("this is not svg at all {{{")
     with pytest.raises(kicad_cli.CliError):
         kicad_cli._rasterize_svg(svg, tmp_path / "out.png", dpi=150)
+
+
+# ---------------------------------------------------------------------------
+# export_pcb_svg — crops to the board, no A4 worksheet frame (R5-1)
+# ---------------------------------------------------------------------------
+
+def test_export_pcb_svg_crops_to_board(tmp_path: Path, monkeypatch) -> None:
+    """PCB SVG export must drop the A4 worksheet frame so the board fills the
+    render — `--page-size-mode 2` + `--exclude-drawing-sheet`."""
+    captured: list = []
+    monkeypatch.setattr(kicad_cli, "_run", lambda *a, **k: captured.extend(a))
+    kicad_cli.export_pcb_svg(
+        "kicad-cli", tmp_path / "b.kicad_pcb", tmp_path / "b.svg"
+    )
+    assert "--exclude-drawing-sheet" in captured
+    assert "--page-size-mode" in captured
+    assert captured[captured.index("--page-size-mode") + 1] == "2"

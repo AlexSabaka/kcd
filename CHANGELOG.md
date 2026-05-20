@@ -262,6 +262,12 @@ Initial alpha release.
   reads the `analyzer_type` of both inputs and returns a clean
   `unsupported_diff` error — also catching a base/head type mismatch.
   Round-5 field report R5-5.
+- `kcd render pcb` SVG/PNG output is cropped to the board. kicad-cli plotted
+  the board on the full A4 worksheet frame, so a ~48 mm board occupied ~15%
+  of the pixels and was unreadable. `export_pcb_svg` now passes
+  `--page-size-mode 2` (board area only) + `--exclude-drawing-sheet`, so the
+  board fills the render. `export pdf --target pcb` keeps the framed sheet.
+  Round-5 field report R5-1.
 
 ### Known limitations
 - Diff-pair length tuning: not implemented
