@@ -10,7 +10,10 @@ Initial alpha release.
 - `kcd inspect sch|pcb|ref` — read-only inspection of design state
 - `kcd edit value|ref|footprint|prop|delete` — offline schematic edits via kicad-skip
 - `kcd edit move-fp` — PCB footprint move via kipy IPC
-- `kcd net list|pcb|trace` — net queries (v1: stub for hierarchical trace)
+- `kcd net list|pcb|of|trace` — net queries: `net list` names schematic
+  nets, `net pcb` lists board nets with pad/track counts, `net of` returns
+  the pads/tracks/vias/zones on a net (`pcb`/`of` via kipy IPC), `net trace`
+  walks the schematic (v1 stub for hierarchical trace)
 - `kcd parity` — whole-board schematic ↔ PCB drift detection (reference set,
   value mismatches, footprint mismatches; degrades to schematic-only listing
   + warning when KiCad isn't open; fails with `error.code: "wrong_board_open"`

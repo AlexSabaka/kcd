@@ -123,6 +123,11 @@ kcd inspect sch <proj> [--json]
 kcd inspect pcb <proj> [--json]                  # needs KiCad open
 kcd inspect ref <proj> <REF> [--json]
 
+# Net
+kcd net list <proj> [--json]                     # named nets in the schematic
+kcd net pcb  [<proj>] [--json]                   # board nets + pad/track counts; needs KiCad open
+kcd net of   [<proj>] --net <NET> [--json]       # pads/tracks/vias/zones on a net; needs KiCad open
+
 # Change (schematic - works offline)
 kcd edit value     <proj> --ref R5 --value 10k [--json]
 kcd edit ref       <proj> --from R5 --to R10 [--json]

@@ -43,6 +43,29 @@ def pcb_nets(
         }
 
 
+@net_app.command("of")
+def net_of(
+    project: str = typer.Argument(
+        None,
+        help="Project path. Omit to auto-detect from the board open in KiCad.",
+    ),
+    net: str = typer.Option(..., "--net", help="Net name to inspect"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """List everything on a net on the PCB — pads, tracks, vias, zones.
+
+    Answers "what is on net X" for the board. Requires KiCad open with the
+    .kicad_pcb; for the schematic-side answer use `kcd net trace`.
+    """
+    with run_command("net.of", json_) as r:
+        proj = resolve_or_active(project)
+        from kcd.adapters import kipy_pcb
+        r.data = {
+            "project": proj.name,
+            **kipy_pcb.net_members(net),
+        }
+
+
 @net_app.command("trace")
 def trace(
     project: str = typer.Argument(...),

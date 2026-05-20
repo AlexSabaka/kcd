@@ -10,6 +10,7 @@ API reference: https://docs.kicad.org/kicad-python-main/board.html
 from __future__ import annotations
 
 import re
+from collections import Counter
 from pathlib import Path as _Path
 from typing import Any
 
@@ -209,19 +210,108 @@ def list_tracks() -> list[dict[str, Any]]:
 
 
 def list_nets() -> list[dict[str, Any]]:
-    """Return all nets on the open board with their pad counts."""
+    """Return all nets on the open board with pad and track counts.
+
+    Counts come from a single pass over the board's pads and tracks. Nets
+    declared on the board but with zero members (unrouted / unused) are
+    still listed, so an agent sees the complete net set — a `pad_count` of
+    0 is a signal, not an omission.
+
+    kipy 0.7.1's `Net` exposes only `name` (no stable net code), so the net
+    name is the join key throughout.
+    """
     board = get_board()
-    out: list[dict[str, Any]] = []
     try:
         nets = board.get_nets()
     except AttributeError:
-        return out
+        return []
+
+    pad_counts: Counter[str] = Counter()
+    for pad in board.get_pads():
+        pad_counts[_net_name(pad)] += 1
+    track_counts: Counter[str] = Counter()
+    for track in board.get_tracks():
+        track_counts[_net_name(track)] += 1
+
+    out: list[dict[str, Any]] = []
     for net in nets:
+        name = net.name
         out.append({
-            "name": net.name,
-            "code": getattr(net, "code", None),
+            "name": name,
+            "pad_count": pad_counts.get(name, 0),
+            "track_count": track_counts.get(name, 0),
         })
     return out
+
+
+def net_members(net_name: str) -> dict[str, Any]:
+    """Return everything on the open board attached to `net_name`.
+
+    Answers the agent's "what is on net X" question: every pad (with its
+    owning footprint reference), track, via, and copper zone carrying the
+    net. Pads have no back-reference to their footprint in kipy, so we map
+    them by iterating footprints.
+
+    Raises:
+        LookupError: no net by that name exists on the board — lets the
+            envelope classify it as `not_found` rather than an empty result
+            that an agent might read as "net X exists but is unconnected".
+    """
+    board = get_board()
+    if net_name not in {n.name for n in board.get_nets()}:
+        raise LookupError(f"Net {net_name!r} not found on board")
+
+    pads: list[dict[str, Any]] = []
+    for fp in board.get_footprints():
+        try:
+            ref = fp.reference_field.text.value
+        except Exception:
+            ref = "?"
+        try:
+            fp_pads = list(fp.definition.pads)
+        except Exception:
+            fp_pads = []
+        for pad in fp_pads:
+            if _net_name(pad) == net_name:
+                pads.append(_pad_to_dict(pad, ref))
+
+    tracks = [t for t in list_tracks() if t["net"] == net_name]
+
+    vias: list[dict[str, Any]] = []
+    for via in board.get_vias():
+        if _net_name(via) != net_name:
+            continue
+        try:
+            vias.append({
+                "x_mm": _nm_to_mm(via.position.x),
+                "y_mm": _nm_to_mm(via.position.y),
+            })
+        except Exception:
+            continue
+
+    zones: list[dict[str, Any]] = []
+    for zone in board.get_zones():
+        try:
+            zone_net = zone.net.name if zone.net is not None else ""
+        except Exception:
+            continue
+        if zone_net != net_name:
+            continue
+        try:
+            zones.append({
+                "name": zone.name,
+                "layers": [_layer_name(la) for la in zone.layers],
+            })
+        except Exception:
+            continue
+
+    return {
+        "net": net_name,
+        "pads": pads,
+        "tracks": tracks,
+        "vias": vias,
+        "zones": zones,
+    }
 
 
 def find_footprint(reference: str) -> dict[str, Any]:
@@ -360,9 +450,34 @@ def _footprint_to_dict(fp: Any) -> dict[str, Any]:
     }
 
 
-def _net_name(track: Any) -> str:
+def _pad_to_dict(pad: Any, footprint_ref: str) -> dict[str, Any]:
+    """Serialize a kipy Pad into a plain dict, tagged with its footprint ref."""
+    return {
+        "footprint": footprint_ref,
+        "pad": _safe(lambda: pad.number, ""),
+        "type": _safe(lambda: _pad_type_name(pad.pad_type), ""),
+        "x_mm": _safe(lambda: _nm_to_mm(pad.position.x), 0.0),
+        "y_mm": _safe(lambda: _nm_to_mm(pad.position.y), 0.0),
+    }
+
+
+def _pad_type_name(pad_type: Any) -> str:
+    """Human name for a kipy PadType enum value (e.g. `"PT_SMD"`).
+
+    Defensive like `_layer_name`: kipy surfaces the type as a proto enum
+    whose `str()` is just the int. Resolve via the enum's `Name()`; fall
+    back to the raw value rather than crashing mid-serialization.
+    """
     try:
-        return track.net.name
+        from kipy.board_types import PadType  # type: ignore[import-untyped]
+        return str(PadType.Name(int(pad_type)))
+    except Exception:
+        return str(pad_type)
+
+
+def _net_name(item: Any) -> str:
+    try:
+        return item.net.name
     except Exception:
         return ""
 
