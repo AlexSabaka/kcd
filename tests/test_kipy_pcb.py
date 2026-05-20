@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 
 from kcd.adapters import kipy_pcb
-from kcd.adapters.kipy_pcb import _ref_sort_key
+from kcd.adapters.kipy_pcb import _layer_enum, _layer_name, _ref_sort_key
+from kcd.core.output import CommandError
 
 
 def test_ref_sort_key_numeric_order() -> None:
@@ -49,6 +50,33 @@ def test_ref_sort_key_multi_letter_prefix() -> None:
     refs = ["TP10", "TP1", "TP2"]
     refs.sort(key=_ref_sort_key)
     assert refs == ["TP1", "TP2", "TP10"]
+
+
+# ---------------------------------------------------------------------------
+# _layer_enum — layer-string -> BoardLayer enum, tolerant of every form
+# ---------------------------------------------------------------------------
+
+def test_layer_enum_canonical_forms_round_trip() -> None:
+    """The canonical KiCad form resolves and round-trips through `_layer_name`."""
+    for name in ("F.Cu", "B.Cu", "In1.Cu"):
+        assert _layer_name(_layer_enum(name)) == name
+
+
+def test_layer_enum_accepts_proto_and_underscore_forms() -> None:
+    """`route_track`'s old bug: only `BL_F_Cu` worked while reads emit `F.Cu`.
+
+    All three forms must now resolve to the same enum so a layer read off one
+    command can be fed straight into another.
+    """
+    canonical = _layer_enum("F.Cu")
+    assert _layer_enum("BL_F_Cu") == canonical
+    assert _layer_enum("F_Cu") == canonical
+
+
+def test_layer_enum_rejects_unknown_layer() -> None:
+    with pytest.raises(CommandError) as exc:
+        _layer_enum("Nonsense.Cu")
+    assert exc.value.code == "bad_layer"
 
 
 # ---------------------------------------------------------------------------

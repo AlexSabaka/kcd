@@ -461,14 +461,17 @@ def add_track(
     track.start = Vector2.from_xy(_mm_to_nm(start_mm[0]), _mm_to_nm(start_mm[1]))
     track.end = Vector2.from_xy(_mm_to_nm(end_mm[0]), _mm_to_nm(end_mm[1]))
     track.width = _mm_to_nm(width_mm)
-    track.layer = layer
+    # `track.layer` is a BoardLayer enum int — the raw layer string KiCad
+    # hands back from a read command would fail kipy serialization. Convert
+    # like `modify_tracks` does, and echo the canonical name back.
+    track.layer = _layer_enum(layer)
     track.net = nets[net_name]
 
     board.create_items([track])
     board.save()
     return {
         "net": net_name,
-        "layer": layer,
+        "layer": _layer_name(track.layer),
         "width_mm": width_mm,
         "start": {"x_mm": start_mm[0], "y_mm": start_mm[1]},
         "end": {"x_mm": end_mm[0], "y_mm": end_mm[1]},
@@ -805,19 +808,25 @@ _TRACK_MATCH_TOL_NM = 50_000
 def _layer_enum(name: str) -> int:
     """Resolve a KiCad layer name (`"F.Cu"`) to its kipy BoardLayer enum value.
 
-    The inverse of `_layer_name`: `F.Cu` -> proto `BL_F_Cu` -> enum int.
+    The inverse of `_layer_name`. Accepts every layer string kcd commands
+    emit or kipy errors mention: the canonical KiCad form (`F.Cu`), the
+    underscore form (`F_Cu`), and kipy's own proto form (`BL_F_Cu`). So a
+    layer read off one command (`net of` / `track delete` emit `F.Cu`) can
+    be fed straight into another without a translation step.
 
     Raises:
         CommandError(code="bad_layer"): the name resolves to no known layer.
     """
     try:
         from kipy.proto.board.board_types_pb2 import BoardLayer  # type: ignore[import-untyped]
-        return int(BoardLayer.Value("BL_" + name.replace(".", "_")))
+        raw = name.strip()
+        proto = raw if raw.startswith("BL_") else "BL_" + raw.replace(".", "_")
+        return int(BoardLayer.Value(proto))
     except (ImportError, ValueError) as e:
         raise CommandError(
             "bad_layer",
-            f"Unknown board layer {name!r} — expected e.g. 'F.Cu', 'B.Cu', "
-            "'In1.Cu'.",
+            f"Unknown board layer {name!r}. Use the dotted KiCad form — "
+            "copper layers are 'F.Cu', 'B.Cu', and 'In1.Cu'…'In30.Cu'.",
         ) from e
 
 

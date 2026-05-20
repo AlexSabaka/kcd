@@ -86,6 +86,14 @@ Initial alpha release.
 - Universal `--json` flag for agent-friendly output
 
 ### Fixed
+- `kcd route track` now accepts the canonical `F.Cu` layer form. `add_track`
+  assigned the raw layer string straight to kipy's `BoardLayer` enum field,
+  so the documented default `F.Cu` — the form every read command (`net of`,
+  `edit track delete`) emits — failed with `unknown enum label`; only kipy's
+  internal `BL_F_Cu` spelling worked. `_layer_enum` now normalizes all three
+  forms (`F.Cu`, `F_Cu`, `BL_F_Cu`) and `add_track` routes through it, so a
+  layer read off one command feeds straight into another. Round-2 field
+  report bug #1.
 - `kcd project current` schematic entries now carry a real filesystem `path`
   (the `.kicad_sch` file location). Previously the parser read kipy's
   `sheet_path.path_human_readable` field, which is the sheet-*hierarchy*
