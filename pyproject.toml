@@ -65,6 +65,12 @@ extend-exclude = ["src/kcd/analyzers"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
 
+[tool.ruff.lint.flake8-bugbear]
+# typer builds CLIs by putting typer.Option / typer.Argument sentinels in
+# parameter defaults — the framework's intended pattern, not a mutable-
+# default bug, so B008 should not flag them.
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra -q"

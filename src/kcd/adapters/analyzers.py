@@ -37,29 +37,30 @@ def _locate_scripts_dir() -> Path:
     )
 
 
-def run_analyzer(
+def run_analyzer_argv(
     script_name: str,
-    target: Path | str,
-    extra_args: list[str] | None = None,
+    argv: list[str],
     timeout: int = 120,
 ) -> dict[str, Any]:
-    """Subprocess-invoke a vendored analyzer; return parsed JSON.
+    """Subprocess-invoke a vendored analyzer with an explicit arg list.
+
+    The general form behind `run_analyzer`: some analyzers take more than a
+    single positional target (e.g. `cross_analysis.py -s sch.json -p
+    pcb.json`, `diff_analysis.py base head`), so callers pass the full
+    argument vector themselves.
 
     Args:
-        script_name: filename in `kcd/analyzers/` (e.g.
-            `"analyze_pcb.py"`).
-        target: path to the file or directory the analyzer should consume
-            (`.kicad_sch`, `.kicad_pcb`, or a gerber directory).
-        extra_args: optional additional CLI flags forwarded to the analyzer.
-        timeout: subprocess timeout in seconds. 120s default — the schematic
-            analyzer is the slowest (~1–3s on a typical board), but
+        script_name: filename in `kcd/analyzers/` (e.g. `"cross_analysis.py"`).
+        argv: arguments passed to the analyzer, after the script path.
+        timeout: subprocess timeout in seconds. 120s default - the schematic
+            analyzer is the slowest (~1-3s on a typical board), but
             cross_analysis on a large board can run several times longer.
 
     Returns: parsed JSON dict from the analyzer's stdout.
 
     Raises:
-        FileNotFoundError: `script_name` not present in
-            `kcd/analyzers/` (packaging / vendor mismatch).
+        FileNotFoundError: `script_name` not present in `kcd/analyzers/`
+            (packaging / vendor mismatch).
         CliError: subprocess returned non-zero exit, timed out, or wrote
             non-JSON to stdout. The envelope ladder maps this to
             `error.code: "cli_failed"`.
@@ -70,9 +71,7 @@ def run_analyzer(
         raise FileNotFoundError(
             f"Analyzer script not found: {script} (in {scripts_dir})"
         )
-    cmd: list[str] = [sys.executable, str(script), str(target)]
-    if extra_args:
-        cmd.extend(extra_args)
+    cmd: list[str] = [sys.executable, str(script), *argv]
     try:
         proc = subprocess.run(
             cmd,
@@ -103,3 +102,20 @@ def run_analyzer(
             cmd, 0, proc.stdout[:1000],
             f"analyzer {script_name} stdout was not valid JSON: {e}",
         ) from e
+
+
+def run_analyzer(
+    script_name: str,
+    target: Path | str,
+    extra_args: list[str] | None = None,
+    timeout: int = 120,
+) -> dict[str, Any]:
+    """Subprocess-invoke a single-positional-target analyzer; return parsed JSON.
+
+    Convenience wrapper over `run_analyzer_argv` for the common case — an
+    analyzer that consumes one file or directory (`analyze_schematic.py`,
+    `analyze_pcb.py`, `analyze_gerbers.py`).
+    """
+    return run_analyzer_argv(
+        script_name, [str(target), *(extra_args or [])], timeout
+    )

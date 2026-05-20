@@ -822,11 +822,17 @@ def kcd_analyze_sch(project: str, out: str | None = None) -> dict[str, Any]:
 
 
 @mcp.tool()
-def kcd_analyze_pcb(project: str, out: str | None = None) -> dict[str, Any]:
+def kcd_analyze_pcb(
+    project: str, full: bool = False, out: str | None = None
+) -> dict[str, Any]:
     """Analyze the PCB — footprints, layers, nets, tracks, vias, decoupling
     placement, ground domains, DFM summary. Read-only; does NOT need KiCad open.
+
+    Set `full=True` for the deeper (slower) analysis pass.
     """
     args = ["analyze", "pcb", project]
+    if full:
+        args.append("--full")
     if out:
         args += ["--out", out]
     return _run(args)
@@ -839,6 +845,109 @@ def kcd_analyze_gerbers(directory: str, out: str | None = None) -> dict[str, Any
     `directory` is a gerber output directory (e.g. from kcd_export_gerber).
     """
     args = ["analyze", "gerbers", directory]
+    if out:
+        args += ["--out", out]
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_analyze_cross(project: str, out: str | None = None) -> dict[str, Any]:
+    """Cross-domain schematic-to-PCB analysis — connector current, ESD gaps,
+    decoupling adequacy, schematic/PCB consistency.
+
+    Runs the schematic and PCB analyzers internally; needs both files present.
+    """
+    args = ["analyze", "cross", project]
+    if out:
+        args += ["--out", out]
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_analyze_thermal(
+    project: str, ambient: float | None = None, out: str | None = None
+) -> dict[str, Any]:
+    """Thermal analysis — junction temperatures and thermal-via adequacy.
+
+    Runs the schematic and PCB analyzers internally. `ambient` sets the
+    ambient temperature in degrees C.
+    """
+    args = ["analyze", "thermal", project]
+    if ambient is not None:
+        args += ["--ambient", str(ambient)]
+    if out:
+        args += ["--out", out]
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_analyze_fab_gate(
+    project: str, strict: bool = False, out: str | None = None
+) -> dict[str, Any]:
+    """Ready-for-fab gate — structured pass/fail checks over the whole design
+    (routing, BOM, DFM, rule-check readiness).
+
+    Runs the schematic and PCB analyzers internally. `strict=True` fails the
+    gate on warnings, not just errors.
+    """
+    args = ["analyze", "fab-gate", project]
+    if strict:
+        args.append("--strict")
+    if out:
+        args += ["--out", out]
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_analyze_whatif(
+    project: str,
+    changes: list[str] | None = None,
+    suggest_fixes: bool = False,
+    out: str | None = None,
+) -> dict[str, Any]:
+    """What-if parameter sweep over the schematic.
+
+    `changes` is a list of component-value overrides (e.g. ["R1=10k",
+    "C3=100n"]). Pass at least one change or `suggest_fixes=True`.
+    """
+    args = ["analyze", "whatif", project, *(changes or [])]
+    if suggest_fixes:
+        args.append("--suggest-fixes")
+    if out:
+        args += ["--out", out]
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_analyze_lifecycle(
+    project: str, temp_range: str | None = None, out: str | None = None
+) -> dict[str, Any]:
+    """Component lifecycle + temperature audit — BOM obsolescence (EOL/NRND)
+    and temperature-range fit.
+
+    Queries distributor APIs; needs DIGIKEY_CLIENT_ID / MOUSER_API_KEY / LCSC
+    credentials in the environment, else degrades to offline checks. Set
+    `temp_range` to a preset (commercial/industrial/extended/automotive/
+    military) or "min,max".
+    """
+    args = ["analyze", "lifecycle", project]
+    if temp_range:
+        args += ["--temp-range", temp_range]
+    if out:
+        args += ["--out", out]
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_analyze_diff(
+    base: str, head: str, out: str | None = None
+) -> dict[str, Any]:
+    """Diff two analyzer JSON runs — component, signal, and finding deltas.
+
+    `base` and `head` are JSON files produced by earlier kcd_analyze_* runs
+    (saved as envelope artifacts).
+    """
+    args = ["analyze", "diff", base, head]
     if out:
         args += ["--out", out]
     return _run(args)

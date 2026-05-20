@@ -18,11 +18,16 @@ from typer.testing import CliRunner
 from kcd.adapters import analyzers
 from kcd.adapters.kicad_cli import CliError
 from kcd.commands.analyze import (
+    analyze_cross_cmd,
+    analyze_diff_cmd,
+    analyze_fab_gate_cmd,
     analyze_gerbers_cmd,
+    analyze_lifecycle_cmd,
     analyze_pcb_cmd,
     analyze_sch_cmd,
+    analyze_thermal_cmd,
+    analyze_whatif_cmd,
 )
-
 
 # Wrap each command in its own Typer so CliRunner can invoke it directly. The
 # real CLI mounts them under `kcd analyze sch|pcb|gerbers`; for tests we hit
@@ -33,6 +38,18 @@ _pcb_app = typer.Typer()
 _pcb_app.command()(analyze_pcb_cmd)
 _gerbers_app = typer.Typer()
 _gerbers_app.command()(analyze_gerbers_cmd)
+_cross_app = typer.Typer()
+_cross_app.command()(analyze_cross_cmd)
+_thermal_app = typer.Typer()
+_thermal_app.command()(analyze_thermal_cmd)
+_fab_gate_app = typer.Typer()
+_fab_gate_app.command()(analyze_fab_gate_cmd)
+_whatif_app = typer.Typer()
+_whatif_app.command()(analyze_whatif_cmd)
+_lifecycle_app = typer.Typer()
+_lifecycle_app.command()(analyze_lifecycle_cmd)
+_diff_app = typer.Typer()
+_diff_app.command()(analyze_diff_cmd)
 
 
 @pytest.fixture
@@ -55,6 +72,14 @@ def _stub_analyzer(monkeypatch, data: dict) -> None:
     monkeypatch.setattr(
         analyzers, "run_analyzer",
         lambda script, target, **kw: data,
+    )
+
+
+def _stub_argv(monkeypatch, data: dict) -> None:
+    """Monkeypatch `analyzers.run_analyzer_argv` to return canned data."""
+    monkeypatch.setattr(
+        analyzers, "run_analyzer_argv",
+        lambda script, argv, **kw: data,
     )
 
 
@@ -246,4 +271,152 @@ def test_analyze_gerbers_requires_existing_directory(monkeypatch, tmp_path: Path
     assert result.exit_code == 1
     out = json.loads(result.stdout)
     assert out["ok"] is False
+    assert out["error"]["code"] == "not_found"
+
+
+# ---------------------------------------------------------------------------
+# analyze pcb --full
+# ---------------------------------------------------------------------------
+
+def test_analyze_pcb_full_flag_forwarded(monkeypatch, proj_dir: Path, tmp_path: Path) -> None:
+    """--full reaches the analyzer as an extra subprocess arg."""
+    captured: dict = {}
+
+    def fake(script, target, **kw):
+        captured.update(kw)
+        return {"findings": []}
+
+    monkeypatch.setattr(analyzers, "run_analyzer", fake)
+    result = CliRunner().invoke(
+        _pcb_app, [str(proj_dir), "--full", "--out", str(tmp_path / "o.json"), "--json"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured.get("extra_args") == ["--full"]
+
+
+# ---------------------------------------------------------------------------
+# analyze cross / thermal / fab-gate (derived from sch + pcb analyzer JSON)
+# ---------------------------------------------------------------------------
+
+def test_analyze_cross_envelope(monkeypatch, proj_dir: Path, tmp_path: Path) -> None:
+    _stub_analyzer(monkeypatch, {"findings": []})
+    _stub_argv(monkeypatch, {"analysis": "cross", "findings": [
+        {"severity": "warning", "rule_id": "XD-001", "detail": "decoupling thin"},
+    ]})
+    result = CliRunner().invoke(
+        _cross_app, [str(proj_dir), "--out", str(tmp_path / "o.json"), "--json"]
+    )
+    assert result.exit_code == 0, result.stdout
+    out = json.loads(result.stdout)
+    assert out["ok"] is True
+    assert out["command"] == "analyze.cross"
+    assert out["data"]["analysis"] == "cross"
+    assert any("[warning][XD-001]" in w for w in out["warnings"])
+
+
+def test_analyze_cross_missing_pcb(monkeypatch, tmp_path: Path) -> None:
+    """A schematic-only project → clean not_found, not a deep analyzer crash."""
+    (tmp_path / "demo.kicad_pro").write_text("{}")
+    (tmp_path / "demo.kicad_sch").write_text("(kicad_sch)")
+    _stub_analyzer(monkeypatch, {"findings": []})
+    _stub_argv(monkeypatch, {"unreachable": True})
+    result = CliRunner().invoke(_cross_app, [str(tmp_path), "--json"])
+    assert result.exit_code == 1
+    out = json.loads(result.stdout)
+    assert out["error"]["code"] == "not_found"
+    assert "PCB" in out["error"]["message"]
+
+
+def test_analyze_thermal_envelope(monkeypatch, proj_dir: Path, tmp_path: Path) -> None:
+    _stub_analyzer(monkeypatch, {"findings": []})
+    _stub_argv(monkeypatch, {"analysis": "thermal", "findings": []})
+    result = CliRunner().invoke(
+        _thermal_app,
+        [str(proj_dir), "--ambient", "40", "--out", str(tmp_path / "o.json"), "--json"],
+    )
+    assert result.exit_code == 0, result.stdout
+    out = json.loads(result.stdout)
+    assert out["command"] == "analyze.thermal"
+    assert out["data"]["analysis"] == "thermal"
+
+
+def test_analyze_fab_gate_envelope(monkeypatch, proj_dir: Path, tmp_path: Path) -> None:
+    _stub_analyzer(monkeypatch, {"findings": []})
+    _stub_argv(monkeypatch, {"gate": "pass", "findings": []})
+    result = CliRunner().invoke(
+        _fab_gate_app,
+        [str(proj_dir), "--strict", "--out", str(tmp_path / "o.json"), "--json"],
+    )
+    assert result.exit_code == 0, result.stdout
+    out = json.loads(result.stdout)
+    assert out["command"] == "analyze.fab-gate"
+    assert out["data"]["gate"] == "pass"
+
+
+# ---------------------------------------------------------------------------
+# analyze whatif / lifecycle (derived from sch analyzer JSON)
+# ---------------------------------------------------------------------------
+
+def test_analyze_whatif_requires_changes(proj_dir: Path) -> None:
+    """No changes and no --suggest-fixes → bad_args before any analyzer runs."""
+    result = CliRunner().invoke(_whatif_app, [str(proj_dir), "--json"])
+    assert result.exit_code == 1
+    out = json.loads(result.stdout)
+    assert out["error"]["code"] == "bad_args"
+
+
+def test_analyze_whatif_envelope(monkeypatch, proj_dir: Path, tmp_path: Path) -> None:
+    _stub_analyzer(monkeypatch, {"findings": []})
+    _stub_argv(monkeypatch, {"analysis": "whatif", "findings": []})
+    result = CliRunner().invoke(
+        _whatif_app,
+        [str(proj_dir), "R1=10k", "--out", str(tmp_path / "o.json"), "--json"],
+    )
+    assert result.exit_code == 0, result.stdout
+    out = json.loads(result.stdout)
+    assert out["command"] == "analyze.whatif"
+    assert out["data"]["analysis"] == "whatif"
+
+
+def test_analyze_lifecycle_envelope(monkeypatch, proj_dir: Path, tmp_path: Path) -> None:
+    _stub_analyzer(monkeypatch, {"findings": []})
+    _stub_argv(monkeypatch, {"analysis": "lifecycle", "findings": []})
+    result = CliRunner().invoke(
+        _lifecycle_app, [str(proj_dir), "--out", str(tmp_path / "o.json"), "--json"]
+    )
+    assert result.exit_code == 0, result.stdout
+    out = json.loads(result.stdout)
+    assert out["command"] == "analyze.lifecycle"
+    assert out["data"]["analysis"] == "lifecycle"
+
+
+# ---------------------------------------------------------------------------
+# analyze diff (two analyzer JSON files in)
+# ---------------------------------------------------------------------------
+
+def test_analyze_diff_envelope(monkeypatch, tmp_path: Path) -> None:
+    base = tmp_path / "base.json"
+    base.write_text("{}")
+    head = tmp_path / "head.json"
+    head.write_text("{}")
+    _stub_argv(monkeypatch, {"analysis": "diff", "findings": []})
+    result = CliRunner().invoke(
+        _diff_app, [str(base), str(head), "--out", str(tmp_path / "o.json"), "--json"]
+    )
+    assert result.exit_code == 0, result.stdout
+    out = json.loads(result.stdout)
+    assert out["command"] == "analyze.diff"
+    assert out["data"]["analysis"] == "diff"
+
+
+def test_analyze_diff_missing_file(monkeypatch, tmp_path: Path) -> None:
+    """A nonexistent input file → error.code='not_found'."""
+    base = tmp_path / "base.json"
+    base.write_text("{}")
+    _stub_argv(monkeypatch, {"unreachable": True})
+    result = CliRunner().invoke(
+        _diff_app, [str(base), str(tmp_path / "nope.json"), "--json"]
+    )
+    assert result.exit_code == 1
+    out = json.loads(result.stdout)
     assert out["error"]["code"] == "not_found"

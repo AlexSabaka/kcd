@@ -21,6 +21,9 @@ No auto-snapshot — analysis is read-only.
 from __future__ import annotations
 
 import json
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import typer
@@ -28,7 +31,7 @@ import typer
 from kcd.adapters import analyzers
 from kcd.core import config as cfg_mod
 from kcd.core.output import CommandError, Result, run_command
-from kcd.core.project import resolve
+from kcd.core.project import Project, resolve
 
 analyze_app = typer.Typer(
     help="Knowledge-layer analysis of KiCad projects "
@@ -88,6 +91,47 @@ def _save_artifact(
     r.add_artifact(kind, str(out_path))
 
 
+@contextmanager
+def _sch_pcb_json(proj: Project) -> Iterator[tuple[Path, Path]]:
+    """Run the schematic + PCB analyzers, yield their JSON as temp-file paths.
+
+    The cross/thermal/fab-gate analyzers consume the *output* of the sch/pcb
+    analyzers rather than raw KiCad files. This produces both into a
+    throwaway temp dir, cleaned up on exit.
+    """
+    for label, p in (("Schematic", proj.sch), ("PCB", proj.pcb)):
+        if not p.is_file():
+            raise CommandError(
+                "not_found",
+                f"{label} file not found: {p} — this analysis needs both "
+                "the .kicad_sch and the .kicad_pcb.",
+            )
+    with tempfile.TemporaryDirectory(prefix="kcd-analyze-") as td:
+        tdp = Path(td)
+        sch = tdp / "sch.json"
+        sch.write_text(
+            json.dumps(analyzers.run_analyzer("analyze_schematic.py", proj.sch))
+        )
+        pcb = tdp / "pcb.json"
+        pcb.write_text(
+            json.dumps(analyzers.run_analyzer("analyze_pcb.py", proj.pcb))
+        )
+        yield sch, pcb
+
+
+@contextmanager
+def _sch_json(proj: Project) -> Iterator[Path]:
+    """Run the schematic analyzer, yield its JSON as a temp-file path."""
+    if not proj.sch.is_file():
+        raise CommandError("not_found", f"Schematic file not found: {proj.sch}")
+    with tempfile.TemporaryDirectory(prefix="kcd-analyze-") as td:
+        sch = Path(td) / "sch.json"
+        sch.write_text(
+            json.dumps(analyzers.run_analyzer("analyze_schematic.py", proj.sch))
+        )
+        yield sch
+
+
 @analyze_app.command("sch")
 def analyze_sch_cmd(
     project: str = typer.Argument(
@@ -121,6 +165,9 @@ def analyze_sch_cmd(
 @analyze_app.command("pcb")
 def analyze_pcb_cmd(
     project: str = typer.Argument(...),
+    full: bool = typer.Option(
+        False, "--full", help="Run the deeper (slower) PCB analysis pass."
+    ),
     out: str | None = typer.Option(None, "--out"),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -132,7 +179,9 @@ def analyze_pcb_cmd(
     """
     with run_command("analyze.pcb", json_) as r:
         proj = resolve(project)
-        data = analyzers.run_analyzer("analyze_pcb.py", proj.pcb)
+        data = analyzers.run_analyzer(
+            "analyze_pcb.py", proj.pcb, extra_args=["--full"] if full else None
+        )
         _lift_findings(data, r)
         _save_artifact(
             data, Path(out) if out else None,
@@ -167,5 +216,189 @@ def analyze_gerbers_cmd(
             data, Path(out) if out else None,
             f"{gerber_dir.name}-analyze-gerbers.json",
             "analyze_gerbers_json", r,
+        )
+        r.data = data
+
+
+@analyze_app.command("cross")
+def analyze_cross_cmd(
+    project: str = typer.Argument(...),
+    out: str | None = typer.Option(None, "--out"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Cross-domain schematic-to-PCB analysis.
+
+    Runs the schematic and PCB analyzers, then cross-checks the two —
+    connector current, ESD gaps, decoupling adequacy, schematic/PCB
+    consistency. Read-only; needs both .kicad_sch and .kicad_pcb present.
+    """
+    with run_command("analyze.cross", json_) as r:
+        proj = resolve(project)
+        with _sch_pcb_json(proj) as (sch, pcb):
+            data = analyzers.run_analyzer_argv(
+                "cross_analysis.py", ["-s", str(sch), "-p", str(pcb)]
+            )
+        _lift_findings(data, r)
+        _save_artifact(
+            data, Path(out) if out else None,
+            f"{proj.name}-analyze-cross.json", "analyze_cross_json", r,
+        )
+        r.data = data
+
+
+@analyze_app.command("thermal")
+def analyze_thermal_cmd(
+    project: str = typer.Argument(...),
+    ambient: float | None = typer.Option(
+        None, "--ambient", help="Ambient temperature in degrees C."
+    ),
+    out: str | None = typer.Option(None, "--out"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Thermal analysis — junction temperatures and thermal-via adequacy.
+
+    Runs the schematic and PCB analyzers, then estimates junction
+    temperatures and checks thermal relief. Read-only.
+    """
+    with run_command("analyze.thermal", json_) as r:
+        proj = resolve(project)
+        extra = ["--ambient", str(ambient)] if ambient is not None else []
+        with _sch_pcb_json(proj) as (sch, pcb):
+            data = analyzers.run_analyzer_argv(
+                "analyze_thermal.py", ["-s", str(sch), "-p", str(pcb), *extra]
+            )
+        _lift_findings(data, r)
+        _save_artifact(
+            data, Path(out) if out else None,
+            f"{proj.name}-analyze-thermal.json", "analyze_thermal_json", r,
+        )
+        r.data = data
+
+
+@analyze_app.command("fab-gate")
+def analyze_fab_gate_cmd(
+    project: str = typer.Argument(...),
+    strict: bool = typer.Option(
+        False, "--strict", help="Fail the gate on warnings, not just errors."
+    ),
+    out: str | None = typer.Option(None, "--out"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Ready-for-fab gate — structured pass/fail checks over the design.
+
+    Runs the schematic and PCB analyzers, then a gate covering routing,
+    BOM, DFM, and rule-check readiness. Read-only.
+    """
+    with run_command("analyze.fab-gate", json_) as r:
+        proj = resolve(project)
+        with _sch_pcb_json(proj) as (sch, pcb):
+            argv = ["-s", str(sch), "-p", str(pcb)]
+            if strict:
+                argv.append("--strict")
+            data = analyzers.run_analyzer_argv("fab_release_gate.py", argv)
+        _lift_findings(data, r)
+        _save_artifact(
+            data, Path(out) if out else None,
+            f"{proj.name}-analyze-fab-gate.json", "analyze_fab_gate_json", r,
+        )
+        r.data = data
+
+
+@analyze_app.command("whatif")
+def analyze_whatif_cmd(
+    project: str = typer.Argument(...),
+    changes: list[str] | None = typer.Argument(
+        None, help="Component-value changes, e.g. R1=10k C3=100n."
+    ),
+    suggest_fixes: bool = typer.Option(
+        False, "--suggest-fixes", help="Suggest component-value fixes."
+    ),
+    out: str | None = typer.Option(None, "--out"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """What-if parameter sweep over the schematic.
+
+    Runs the schematic analyzer, then re-evaluates affected subcircuits
+    under the given component-value changes. Read-only.
+    """
+    with run_command("analyze.whatif", json_) as r:
+        if not (changes or suggest_fixes):
+            raise CommandError(
+                "bad_args",
+                "Pass at least one REF=VALUE change (e.g. R1=10k) or "
+                "--suggest-fixes.",
+            )
+        proj = resolve(project)
+        with _sch_json(proj) as sch:
+            argv = [str(sch), *(changes or [])]
+            if suggest_fixes:
+                argv.append("--suggest-fixes")
+            data = analyzers.run_analyzer_argv("what_if.py", argv)
+        _lift_findings(data, r)
+        _save_artifact(
+            data, Path(out) if out else None,
+            f"{proj.name}-analyze-whatif.json", "analyze_whatif_json", r,
+        )
+        r.data = data
+
+
+@analyze_app.command("lifecycle")
+def analyze_lifecycle_cmd(
+    project: str = typer.Argument(...),
+    temp_range: str | None = typer.Option(
+        None, "--temp-range",
+        help="Design temp range: a preset (commercial/industrial/extended/"
+             "automotive/military) or 'min,max'.",
+    ),
+    out: str | None = typer.Option(None, "--out"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Component lifecycle + temperature audit.
+
+    Runs the schematic analyzer, then audits the BOM for obsolescence
+    (EOL/NRND) and temperature-range fit. Queries distributor APIs — set
+    DIGIKEY_CLIENT_ID / MOUSER_API_KEY / LCSC credentials in the
+    environment; without them the audit degrades to offline checks only.
+    """
+    with run_command("analyze.lifecycle", json_) as r:
+        proj = resolve(project)
+        with _sch_json(proj) as sch:
+            argv = [str(sch)]
+            if temp_range:
+                argv += ["--temp-range", temp_range]
+            data = analyzers.run_analyzer_argv("lifecycle_audit.py", argv)
+        _lift_findings(data, r)
+        _save_artifact(
+            data, Path(out) if out else None,
+            f"{proj.name}-analyze-lifecycle.json", "analyze_lifecycle_json", r,
+        )
+        r.data = data
+
+
+@analyze_app.command("diff")
+def analyze_diff_cmd(
+    base: str = typer.Argument(..., help="Base (old) analyzer JSON file."),
+    head: str = typer.Argument(..., help="Head (new) analyzer JSON file."),
+    out: str | None = typer.Option(None, "--out"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Diff two analyzer JSON runs — component, signal, and finding deltas.
+
+    `base` and `head` are JSON files from earlier `kcd analyze` runs (saved
+    as envelope artifacts). Read-only.
+    """
+    with run_command("analyze.diff", json_) as r:
+        base_p = Path(base).expanduser()
+        head_p = Path(head).expanduser()
+        for label, p in (("base", base_p), ("head", head_p)):
+            if not p.is_file():
+                raise CommandError("not_found", f"{label} JSON not found: {p}")
+        data = analyzers.run_analyzer_argv(
+            "diff_analysis.py", [str(base_p), str(head_p)]
+        )
+        _lift_findings(data, r)
+        _save_artifact(
+            data, Path(out) if out else None,
+            "analyze-diff.json", "analyze_diff_json", r,
         )
         r.data = data
