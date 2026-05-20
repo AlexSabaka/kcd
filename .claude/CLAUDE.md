@@ -186,3 +186,38 @@ kcd export bom    <proj> --out bom.csv
 kcd export step   <proj> --out board.step
 kcd export pdf    <proj> --out board.pdf --target pcb|sch
 ```
+
+## Working on kcd (for agents extending the tool)
+
+Repo layout:
+
+- `src/kcd/commands/` — one module per command group; `typer` subcommands.
+- `src/kcd/adapters/` — external-tool boundaries: `kicad_cli.py` (kicad-cli
+  subprocess), `kipy_pcb.py` (live PCB IPC), `skip_sch.py` (offline schematic
+  edits via kicad-skip), `kicad_pro.py` (`.kicad_pro` JSON), `analyzers.py`
+  (analyzer-engine subprocess runner).
+- `src/kcd/core/` — `output.py` (the JSON-envelope `run_command` / `Result`),
+  `project.py` (path resolution), `snapshot.py` (git-backed snapshots),
+  `config.py`.
+- `src/kcd/analyzers/` — the **vendored** `kicad-happy` analyzer engine
+  (~24 subprocess-invoked scripts). Not kcd's own code: ruff-excluded
+  (`[tool.ruff.lint] extend-exclude`), never imported — only run via
+  `adapters/analyzers.py`. Don't lint or refactor it.
+- `src/kcd_mcp/__main__.py` — the MCP server (hand-written FastMCP, one
+  `@mcp.tool()` per CLI subcommand).
+
+**The MCP parity trap.** `tests/test_mcp_parity.py` fails the build if a CLI
+leaf command has no matching MCP tool (or vice versa) — but it checks tool
+*names only*, not parameters. When you **add a flag** to a CLI command you
+must hand-add it to the MCP wrapper in `src/kcd_mcp/__main__.py`; the drift
+guard will not catch a missing param.
+
+**Mutating commands** go through `_pre_edit` (snapshot) / `run_command`
+(envelope). A command that fails after snapshotting has its snapshot
+discarded automatically — don't add manual rollback for that case.
+
+**Environment.** kcd is editable-installed into `.venv`; there is no system
+`python` — run everything via `.venv/bin/python` (e.g.
+`.venv/bin/python -m pytest`). `ruff check` carries a few long-standing
+pre-existing items in untouched files; keep your *changed* lines clean and
+don't side-quest the rest.
