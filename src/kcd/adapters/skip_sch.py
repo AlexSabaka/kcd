@@ -329,9 +329,101 @@ def list_nets(sch_path: Path) -> list[dict[str, Any]]:
     return list(out.values())
 
 
+def trace_net(sch_path: Path, net_name: str) -> dict[str, Any]:
+    """Trace a named net through one schematic sheet.
+
+    Walks kicad-skip's wire-graph connectivity outward from every symbol pin
+    and collects the component pins electrically attached to `net_name` via a
+    local label or a global label. Power nets (where `net_name` is declared
+    by `power:*` symbols rather than a label) are reported as the declaring
+    power symbols only — see the scope note below.
+
+    Returns ``{net, found, kind, pins, symbols}`` where ``kind`` is a sorted
+    list drawn from ``label`` / ``global`` / ``power``, ``pins`` is
+    ``[{reference, pin, pin_name}, ...]``, and ``symbols`` is the sorted set
+    of references touching the net.
+
+    Scope / known limits (surface these to the caller):
+      - One sheet file. Cross-sheet hierarchical joins are not resolved.
+      - Power nets: kicad-skip cannot crawl connectivity *through* single-pin
+        symbols, and power symbols are single-pin — so for a power net we can
+        name the declaring `power:*` symbols but not the component pins on
+        it. Use `kcd net of` for the PCB-side membership of a power net.
+      - Unnamed / KiCad-auto-named nets (e.g. `Net-(R1-Pad2)`) are out of
+        scope — only label / global-label / power nets.
+    """
+    sch = _load(sch_path)
+    pins: list[dict[str, Any]] = []
+    symbols: set[str] = set()
+    kinds: set[str] = set()
+
+    for sym in sch.symbol:
+        ref = _prop(sym, "Reference")
+        lib_id = _lib_id(sym) or ""
+        if lib_id.startswith("power:"):
+            # The power symbol's Value *is* the net name. Its single pin
+            # can't be crawled (see scope note), so we record the anchor
+            # only.
+            if _prop(sym, "Value") == net_name:
+                kinds.add("power")
+                symbols.add(ref)
+            continue
+        for pin in _iter_symbol_pins(sym):
+            try:
+                local = {lbl.value for lbl in pin.attached_labels}
+                glob = {lbl.value for lbl in pin.attached_global_labels}
+            except Exception:
+                continue
+            if net_name in local:
+                kinds.add("label")
+            elif net_name in glob:
+                kinds.add("global")
+            else:
+                continue
+            symbols.add(ref)
+            pins.append({
+                "reference": ref,
+                "pin": _safe_pin_attr(pin, "number"),
+                "pin_name": _safe_pin_attr(pin, "name"),
+            })
+
+    return {
+        "net": net_name,
+        "found": bool(symbols),
+        "kind": sorted(kinds),
+        "pins": pins,
+        "symbols": sorted(symbols),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _iter_symbol_pins(sym: Any):
+    """Yield kicad-skip `SymbolPin` objects for a symbol.
+
+    Tolerates kicad-skip's single-pin quirk: a symbol with exactly one
+    `(pin ...)` comes back from `sym.pin` as a bare `ParsedValue` whose
+    iteration yields raw strings, not pin objects. We detect real pins by
+    the `SymbolPin` API (`attached_labels` + `location`) and skip the rest —
+    single-pin symbols (power flags, test points) simply aren't traced.
+    """
+    try:
+        raw = list(sym.pin)
+    except Exception:
+        return
+    for p in raw:
+        if hasattr(p, "attached_labels") and hasattr(p, "location"):
+            yield p
+
+
+def _safe_pin_attr(pin: Any, attr: str) -> str:
+    try:
+        return str(getattr(pin, attr))
+    except Exception:
+        return ""
+
 
 def _prop(sym: Any, field: str) -> str:
     try:

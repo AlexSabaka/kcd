@@ -72,18 +72,28 @@ def trace(
     net: str = typer.Option(..., "--net", help="Net name to trace"),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Trace a net through the schematic — components connected, sheet locations.
+    """Trace a net through the schematic — the component pins on it.
 
-    NOTE: this is a v1 stub. Full hierarchical net tracing requires walking
-    sheet boundaries, which kicad-skip handles partially. For now we list
-    symbols whose pins touch the named net via label proximity.
+    Resolves label and global-label nets to the actual symbol pins via
+    kicad-skip's wire-graph connectivity. For the PCB-side membership of a
+    net — and for power nets — use `kcd net of`.
     """
     with run_command("net.trace", json_) as r:
         proj = resolve(project)
+        result = skip_sch.trace_net(proj.sch, net)
+        r.data = result
         r.warn(
-            "net.trace is a v1 stub — only direct label-attached pins are detected. "
-            "For full connectivity, also check `kcd net pcb` if board is open."
+            "net.trace covers the root sheet's label and global-label nets; "
+            "hierarchical sub-sheets and unnamed/auto-named nets are not traced."
         )
-        nets = skip_sch.list_nets(proj.sch)
-        matches = [n for n in nets if n["name"] == net]
-        r.data = {"net": net, "found_in_schematic": bool(matches), "labels": matches}
+        if not result["found"]:
+            r.warn(
+                f"Net {net!r} not found on the root sheet — if it's a PCB "
+                f"net, run `kcd net of --net {net}` with KiCad open."
+            )
+        elif "power" in result["kind"]:
+            r.warn(
+                f"{net!r} is a power net: the declaring power symbols are "
+                "listed, but component pins can't be traced through them "
+                "(kicad-skip single-pin limitation) — use `kcd net of`."
+            )

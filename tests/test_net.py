@@ -18,16 +18,24 @@ import typer
 from typer.testing import CliRunner
 
 from kcd.adapters import kipy_pcb
-from kcd.commands.net import net_of, pcb_nets
+from kcd.adapters.skip_sch import trace_net
+from kcd.commands.net import net_of, pcb_nets, trace
 from kcd.core.ipc import IpcUnavailable
 
 # Wrap each command in its own Typer so CliRunner can invoke it directly. The
-# real CLI mounts them under `kcd net pcb|of`; tests hit the functions and
-# pass `--json` for parseable output.
+# real CLI mounts them under `kcd net pcb|of|trace`; tests hit the functions
+# and pass `--json` for parseable output.
 _pcb_app = typer.Typer()
 _pcb_app.command()(pcb_nets)
 _of_app = typer.Typer()
 _of_app.command()(net_of)
+_trace_app = typer.Typer()
+_trace_app.command()(trace)
+
+# A hand-authored single-sheet schematic: R1 pin2 — wire — R2 pin1 carry the
+# local label SIGNAL; R2 pin2 — wire — power:GND symbol #PWR01.
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "net"
+FIXTURE_SCH = FIXTURE_DIR / "net_fixture.kicad_sch"
 
 
 @pytest.fixture
@@ -134,3 +142,74 @@ def test_net_of_ipc_unavailable(monkeypatch, proj_dir: Path) -> None:
     out = json.loads(result.stdout)
     assert out["ok"] is False
     assert out["error"]["code"] == "ipc_unavailable"
+
+
+# ---------------------------------------------------------------------------
+# trace_net adapter — run against the real fixture schematic (kicad-skip)
+# ---------------------------------------------------------------------------
+
+def test_trace_net_label_resolves_component_pins() -> None:
+    """A local-label net resolves to the exact symbol pins on it."""
+    result = trace_net(FIXTURE_SCH, "SIGNAL")
+    assert result["found"] is True
+    assert result["kind"] == ["label"]
+    assert result["symbols"] == ["R1", "R2"]
+    pins = {(p["reference"], p["pin"]) for p in result["pins"]}
+    assert pins == {("R1", "2"), ("R2", "1")}
+
+
+def test_trace_net_power_lists_anchor_without_pins() -> None:
+    """A power net lists the declaring power symbol but not component pins
+    (kicad-skip can't crawl through single-pin symbols)."""
+    result = trace_net(FIXTURE_SCH, "GND")
+    assert result["found"] is True
+    assert result["kind"] == ["power"]
+    assert result["symbols"] == ["#PWR01"]
+    assert result["pins"] == []
+
+
+def test_trace_net_unknown_net_not_found() -> None:
+    """A name that is neither label nor power net → found=false, empty."""
+    result = trace_net(FIXTURE_SCH, "NOPE")
+    assert result["found"] is False
+    assert result["pins"] == []
+    assert result["symbols"] == []
+
+
+# ---------------------------------------------------------------------------
+# net trace command
+# ---------------------------------------------------------------------------
+
+def test_net_trace_command_label() -> None:
+    """`net trace` on a label net → envelope with the pin list + scope warn."""
+    runner = CliRunner()
+    result = runner.invoke(_trace_app, [str(FIXTURE_DIR), "--net", "SIGNAL", "--json"])
+    assert result.exit_code == 0, result.stdout
+    out = json.loads(result.stdout)
+    assert out["ok"] is True
+    assert out["command"] == "net.trace"
+    assert out["data"]["found"] is True
+    pins = {(p["reference"], p["pin"]) for p in out["data"]["pins"]}
+    assert pins == {("R1", "2"), ("R2", "1")}
+    # The scope caveat is always surfaced so an agent knows the edges.
+    assert any("hierarchical" in w for w in out["warnings"])
+
+
+def test_net_trace_command_power_warns() -> None:
+    """`net trace` on a power net → power-specific warning pointing at `net of`."""
+    runner = CliRunner()
+    result = runner.invoke(_trace_app, [str(FIXTURE_DIR), "--net", "GND", "--json"])
+    assert result.exit_code == 0, result.stdout
+    out = json.loads(result.stdout)
+    assert out["data"]["kind"] == ["power"]
+    assert any("power net" in w and "net of" in w for w in out["warnings"])
+
+
+def test_net_trace_command_not_found_warns() -> None:
+    """`net trace` on an unknown net → found=false + a `net of` hint."""
+    runner = CliRunner()
+    result = runner.invoke(_trace_app, [str(FIXTURE_DIR), "--net", "NOPE", "--json"])
+    assert result.exit_code == 0, result.stdout
+    out = json.loads(result.stdout)
+    assert out["data"]["found"] is False
+    assert any("net of" in w for w in out["warnings"])

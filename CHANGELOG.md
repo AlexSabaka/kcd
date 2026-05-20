@@ -13,7 +13,8 @@ Initial alpha release.
 - `kcd net list|pcb|of|trace` — net queries: `net list` names schematic
   nets, `net pcb` lists board nets with pad/track counts, `net of` returns
   the pads/tracks/vias/zones on a net (`pcb`/`of` via kipy IPC), `net trace`
-  walks the schematic (v1 stub for hierarchical trace)
+  resolves a schematic label/global-label net to the component pins on it
+  (root sheet; power nets list the declaring power symbols only)
 - `kcd parity` — whole-board schematic ↔ PCB drift detection (reference set,
   value mismatches, footprint mismatches; degrades to schematic-only listing
   + warning when KiCad isn't open; fails with `error.code: "wrong_board_open"`
