@@ -14,7 +14,7 @@ import pytest
 from typer.testing import CliRunner
 
 from kcd.adapters import kipy_pcb
-from kcd.commands.edit import track_app, via_app
+from kcd.commands.edit import track_app, via_app, zone_app
 from kcd.core.ipc import IpcUnavailable
 from kcd.core.output import CommandError
 
@@ -232,3 +232,78 @@ def test_via_add_ipc_unavailable(proj_dir: Path, monkeypatch) -> None:
     )
     assert r.exit_code == 1
     assert json.loads(r.stdout)["error"]["code"] == "ipc_unavailable"
+
+
+# ---------------------------------------------------------------------------
+# edit zone add / delete — command layer (adapter monkeypatched)
+# ---------------------------------------------------------------------------
+
+def test_zone_add_envelope(proj_dir: Path, monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_add_zone(expected_pcb, net, layer, rect_mm, priority, clearance_mm):
+        captured.update(rect=rect_mm, priority=priority, clearance=clearance_mm)
+        return {"net": net, "layer": layer}
+
+    monkeypatch.setattr(kipy_pcb, "add_zone", fake_add_zone)
+    r = CliRunner().invoke(
+        zone_app,
+        ["add", str(proj_dir), "--net", "GND", "--layer", "F.Cu",
+         "--rect", "0,0,10,8", "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    out = json.loads(r.stdout)
+    assert out["ok"] is True
+    assert out["command"] == "edit.zone.add"
+    assert out["data"]["added"]["net"] == "GND"
+    assert captured["rect"] == (0.0, 0.0, 10.0, 8.0)
+    assert captured["priority"] == 0 and captured["clearance"] is None
+    assert any("board.save()" in w for w in out["warnings"])
+
+
+def test_zone_add_bad_rect(proj_dir: Path) -> None:
+    r = CliRunner().invoke(
+        zone_app,
+        ["add", str(proj_dir), "--net", "GND", "--layer", "F.Cu",
+         "--rect", "0,0,10", "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "bad_coordinate"
+
+
+def test_zone_add_ipc_unavailable(proj_dir: Path, monkeypatch) -> None:
+    def boom(*a, **k):
+        raise IpcUnavailable("KiCad not running")
+
+    monkeypatch.setattr(kipy_pcb, "add_zone", boom)
+    r = CliRunner().invoke(
+        zone_app,
+        ["add", str(proj_dir), "--net", "GND", "--layer", "F.Cu",
+         "--rect", "0,0,10,8", "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "ipc_unavailable"
+
+
+def test_zone_delete_envelope(proj_dir: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        kipy_pcb, "delete_zones",
+        lambda *a, **k: {"deleted": [{"net": "GND"}], "count": 1},
+    )
+    r = CliRunner().invoke(
+        zone_app,
+        ["delete", str(proj_dir), "--net", "GND", "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    out = json.loads(r.stdout)
+    assert out["command"] == "edit.zone.delete"
+    assert out["data"]["count"] == 1
+
+
+def test_zone_delete_no_selector(proj_dir: Path) -> None:
+    """No --net / --layer → the real delete_zones rejects before any IPC."""
+    r = CliRunner().invoke(
+        zone_app, ["delete", str(proj_dir), "--no-snapshot", "--json"]
+    )
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "bad_selector"

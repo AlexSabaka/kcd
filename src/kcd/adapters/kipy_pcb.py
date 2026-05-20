@@ -581,6 +581,102 @@ def add_via(
     }
 
 
+def add_zone(
+    expected_pcb: _Path,
+    net_name: str,
+    layer: str,
+    rect_mm: tuple[float, float, float, float],
+    priority: int = 0,
+    clearance_mm: float | None = None,
+) -> dict[str, Any]:
+    """Add a rectangular copper-pour zone to the open board.
+
+    `rect_mm` is (x1, y1, x2, y2) — two opposite corners in mm. The zone is
+    created, then KiCad refills all zones. Arbitrary (non-rectangular)
+    outlines are out of scope. Persists via `board.save()`.
+
+    Raises:
+        LookupError: no net by that name exists on the board.
+    """
+    from kipy.board_types import Zone  # type: ignore[import-untyped]
+    from kipy.geometry import (  # type: ignore[import-untyped]
+        PolygonWithHoles,
+        PolyLine,
+        PolyLineNode,
+    )
+
+    assert_board_is(expected_pcb)
+    board = get_board()
+    nets = {n.name: n for n in board.get_nets()}
+    if net_name not in nets:
+        raise LookupError(f"Net {net_name!r} not found on board")
+
+    x1, y1, x2, y2 = (_mm_to_nm(v) for v in rect_mm)
+    outline = PolyLine()
+    for x, y in ((x1, y1), (x2, y1), (x2, y2), (x1, y2)):
+        outline.append(PolyLineNode.from_xy(x, y))
+    outline.closed = True
+    poly = PolygonWithHoles()
+    poly.outline = outline
+
+    zone = Zone()
+    zone.outline = poly
+    zone.layers = [_layer_enum(layer)]
+    zone.net = nets[net_name]
+    zone.priority = priority
+    if clearance_mm is not None:
+        zone.clearance = _mm_to_nm(clearance_mm)
+
+    board.create_items([zone])
+    board.refill_zones()
+    board.save()
+    return {
+        "net": net_name,
+        "layer": layer,
+        "rect_mm": list(rect_mm),
+        "priority": priority,
+    }
+
+
+def delete_zones(
+    expected_pcb: _Path,
+    net: str | None = None,
+    layer: str | None = None,
+) -> dict[str, Any]:
+    """Delete copper zones from the open board.
+
+    Zones have no endpoints — select by `net` and/or `layer` (at least
+    one). Remaining zones are refilled. Persists via `board.save()`.
+
+    Raises:
+        CommandError(code="bad_selector"): neither selector was given.
+        CommandError(code="not_found"): nothing matched.
+    """
+    if net is None and layer is None:
+        raise CommandError(
+            "bad_selector", "Specify --net and/or --layer to pick zones."
+        )
+    assert_board_is(expected_pcb)
+    board = get_board()
+    want_layer = _layer_enum(layer) if layer is not None else None
+
+    matched = []
+    for zone in board.get_zones():
+        if net is not None and _zone_net_name(zone) != net:
+            continue
+        if want_layer is not None and want_layer not in list(zone.layers):
+            continue
+        matched.append(zone)
+
+    if not matched:
+        raise CommandError("not_found", "No zone matched the given selectors.")
+    deleted = [_zone_summary(z) for z in matched]
+    board.remove_items(matched)
+    board.refill_zones()
+    board.save()
+    return {"deleted": deleted, "count": len(deleted)}
+
+
 def revert_board() -> None:
     """Force KiCad to discard in-memory board state and reload from disk.
 
@@ -794,4 +890,22 @@ def _track_summary(track: Any) -> dict[str, Any]:
         "width_mm": _nm_to_mm(track.width),
         "start": {"x_mm": _nm_to_mm(track.start.x), "y_mm": _nm_to_mm(track.start.y)},
         "end": {"x_mm": _nm_to_mm(track.end.x), "y_mm": _nm_to_mm(track.end.y)},
+    }
+
+
+def _zone_net_name(zone: Any) -> str:
+    """Net name of a copper zone, or "" for rule areas / on any error."""
+    try:
+        return zone.net.name if zone.net is not None else ""
+    except Exception:
+        return ""
+
+
+def _zone_summary(zone: Any) -> dict[str, Any]:
+    """Serialize a kipy Zone into a plain dict."""
+    return {
+        "net": _zone_net_name(zone),
+        "name": _safe(lambda: zone.name, ""),
+        "layers": _safe(lambda: [_layer_name(la) for la in zone.layers], []),
+        "priority": _safe(lambda: zone.priority, 0),
     }

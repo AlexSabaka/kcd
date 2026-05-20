@@ -247,6 +247,21 @@ def _parse_xy(text: str) -> tuple[float, float]:
         ) from None
 
 
+def _parse_rect(text: str) -> tuple[float, float, float, float]:
+    """Parse an `'x1,y1,x2,y2'` rectangle option into a 4-float tuple (mm)."""
+    parts = text.split(",")
+    if len(parts) != 4:
+        raise CommandError(
+            "bad_coordinate", f"Expected 'x1,y1,x2,y2', got {text!r}."
+        )
+    try:
+        return (float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3]))
+    except ValueError:
+        raise CommandError(
+            "bad_coordinate", f"Expected numeric 'x1,y1,x2,y2', got {text!r}."
+        ) from None
+
+
 @wire_app.command("add")
 def wire_add(
     project: str = typer.Argument(...),
@@ -751,3 +766,68 @@ def via_add(
 
 
 edit_app.add_typer(via_app, name="via")
+
+
+zone_app = typer.Typer(help="Add or delete copper zones on the PCB (kipy IPC).")
+
+
+@zone_app.command("add")
+def zone_add(
+    project: str = typer.Argument(
+        None,
+        help="Project path. Omit to auto-detect from the board open in KiCad.",
+    ),
+    net: str = typer.Option(..., "--net", help="Net the copper pour connects"),
+    layer: str = typer.Option(..., "--layer", help="Copper layer, e.g. F.Cu"),
+    rect: str = typer.Option(..., "--rect", help="Corners 'x1,y1,x2,y2' in mm"),
+    priority: int = typer.Option(0, "--priority", help="Higher priority fills first"),
+    clearance: float = typer.Option(None, "--clearance", help="Local clearance in mm"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Add a rectangular copper-pour zone. Requires KiCad open with the PCB editor.
+
+    The zone is created and KiCad refills all zones. Arbitrary
+    (non-rectangular) outlines are out of scope.
+
+    Note: calls board.save() — see the warning emitted on every run.
+    """
+    with run_command("edit.zone.add", json_) as r:
+        corners = _parse_rect(rect)
+        proj, r.snapshot_before = _pre_edit(
+            project, f"add zone on {net}", no_snapshot, auto=True
+        )
+        r.warn(_BOARD_SAVE_WARNING)
+        from kcd.adapters import kipy_pcb
+        r.data = {"added": kipy_pcb.add_zone(
+            proj.pcb, net, layer, corners, priority, clearance
+        )}
+
+
+@zone_app.command("delete")
+def zone_delete(
+    project: str = typer.Argument(
+        None,
+        help="Project path. Omit to auto-detect from the board open in KiCad.",
+    ),
+    net: str = typer.Option(None, "--net", help="Select zones on this net"),
+    layer: str = typer.Option(None, "--layer", help="Select zones on this layer"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Delete copper zones. Requires KiCad open with the PCB editor.
+
+    Zones have no endpoints — select by --net and/or --layer.
+
+    Note: calls board.save() — see the warning emitted on every run.
+    """
+    with run_command("edit.zone.delete", json_) as r:
+        proj, r.snapshot_before = _pre_edit(
+            project, "delete zone(s)", no_snapshot, auto=True
+        )
+        r.warn(_BOARD_SAVE_WARNING)
+        from kcd.adapters import kipy_pcb
+        r.data = kipy_pcb.delete_zones(proj.pcb, net, layer)
+
+
+edit_app.add_typer(zone_app, name="zone")

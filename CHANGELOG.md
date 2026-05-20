@@ -40,6 +40,11 @@ Initial alpha release.
   a net at a given point with configurable copper and drill diameter
   (defaults 0.6 / 0.3 mm). Blind/buried vias are out of scope. Requires
   KiCad open with the PCB editor; `board.save()` caveat applies
+- `kcd edit zone add|delete` — PCB copper-zone editing via kipy IPC: add a
+  rectangular copper pour (net + layer + corner rectangle, optional
+  priority and local clearance) or delete zones selected by net and/or
+  layer. Both trigger a zone refill. Arbitrary (non-rectangular) outlines
+  are out of scope. Requires KiCad open; `board.save()` caveat applies
 - `kcd net list|pcb|of|trace` — net queries: `net list` names schematic
   nets, `net pcb` lists board nets with pad/track counts, `net of` returns
   the pads/tracks/vias/zones on a net (`pcb`/`of` via kipy IPC), `net trace`
