@@ -14,6 +14,10 @@ Each subcommand:
     (so agents that don't unpack ``data`` still see the headline issues)
   - dumps the raw analyzer JSON to ``$KCD_RENDER_CACHE`` as a
     structured artifact for cheap re-reads
+  - folds the report for the inline envelope (``_compact``): the full
+    analyzer JSON overruns the 1MB MCP result cap on real boards, so
+    ``data`` carries the headline + folded findings and the bulk sections
+    spill to the artifact
 
 No auto-snapshot — analysis is read-only.
 """
@@ -74,6 +78,105 @@ def _lift_findings(data: dict, r: Result) -> None:
         rule = f.get("rule_id") or f.get("detector") or ""
         prefix = f"[{sev}]" + (f"[{rule}]" if rule else "")
         r.warn(f"{prefix} {msg}")
+
+
+# --- inline-envelope folding -------------------------------------------------
+# The vendored analyzers emit large JSON (full BOM, every net, every track,
+# dependency graphs) — a 58-component board overruns the 1MB MCP result cap.
+# `_compact` keeps the headline (summary, trust_summary), folds `findings` by
+# (rule_id, severity), and spills bulk sections. The artifact always holds the
+# complete analyzer JSON, so nothing is lost — only re-shaped for the envelope.
+
+_FOLD_SAMPLE = 3          # findings kept per (rule_id, severity) group
+_VALUE_BUDGET = 24_000    # max JSON chars for one inline section before it spills
+_TOTAL_BUDGET = 96_000    # max JSON chars for the whole compacted `data`
+
+_SEVERITY_RANK = {
+    "critical": 0, "error": 1, "warning": 2,
+    "info": 3, "advisory": 4, "debug": 5,
+}
+
+_HEADLINE_KEYS = ("summary", "trust_summary", "verdict", "status", "metadata")
+
+
+def _jsize(value: object) -> int:
+    """JSON-serialized size of `value` in chars — a cheap budget proxy."""
+    try:
+        return len(json.dumps(value, default=str))
+    except (TypeError, ValueError):
+        return _VALUE_BUDGET + 1
+
+
+def _fold_findings(findings: list) -> list[dict]:
+    """Group findings by `(rule_id, severity)` — a true count plus a sample.
+
+    Mirrors the `drc` fold: a uniform issue kind collapses to one row; the
+    complete finding list stays in the artifact.
+    """
+    groups: dict[tuple[str, str], list] = {}
+    for f in findings:
+        if not isinstance(f, dict):
+            continue
+        rule = f.get("rule_id") or f.get("detector") or "?"
+        sev = (f.get("severity") or "info").lower()
+        groups.setdefault((rule, sev), []).append(f)
+    out = [
+        {
+            "rule_id": rule, "severity": sev,
+            "count": len(members), "sample": members[:_FOLD_SAMPLE],
+        }
+        for (rule, sev), members in groups.items()
+    ]
+    out.sort(key=lambda g: (_SEVERITY_RANK.get(g["severity"], 9), -g["count"]))
+    return out
+
+
+def _compact(data: dict) -> dict:
+    """Shrink an analyzer report for the inline envelope.
+
+    `findings` is folded; `summary` / `trust_summary` ride verbatim; the
+    remaining sections are kept smallest-first while under budget and the
+    rest spill (named in `spilled.sections`). The complete report is always
+    written to the artifact by `_save_artifact`.
+    """
+    if not isinstance(data, dict):
+        return data
+    out: dict = {}
+    spilled: list[str] = []
+    used = 0
+
+    findings = data.get("findings")
+    if isinstance(findings, list):
+        out["findings"] = _fold_findings(findings)
+        out["finding_total"] = len(findings)
+        used += _jsize(out["findings"])
+
+    for key in _HEADLINE_KEYS:
+        if key in data and key not in out:
+            out[key] = data[key]
+            used += _jsize(data[key])
+
+    rest = sorted(
+        ((k, v) for k, v in data.items() if k != "findings" and k not in out),
+        key=lambda kv: _jsize(kv[1]),
+    )
+    for key, value in rest:
+        size = _jsize(value)
+        if size <= _VALUE_BUDGET and used + size <= _TOTAL_BUDGET:
+            out[key] = value
+            used += size
+        else:
+            spilled.append(key)
+            if isinstance(value, list):
+                out[key] = {"count": len(value)}
+
+    if spilled:
+        out["spilled"] = {
+            "sections": sorted(spilled),
+            "note": "large sections elided from the inline envelope; "
+                    "the full analyzer JSON is in the artifact",
+        }
+    return out
 
 
 def _save_artifact(
@@ -159,7 +262,7 @@ def analyze_sch_cmd(
             f"{proj.name}-analyze-sch.json",
             "analyze_schematic_json", r,
         )
-        r.data = data
+        r.data = _compact(data)
 
 
 @analyze_app.command("pcb")
@@ -188,7 +291,7 @@ def analyze_pcb_cmd(
             f"{proj.name}-analyze-pcb.json",
             "analyze_pcb_json", r,
         )
-        r.data = data
+        r.data = _compact(data)
 
 
 @analyze_app.command("gerbers")
@@ -217,7 +320,7 @@ def analyze_gerbers_cmd(
             f"{gerber_dir.name}-analyze-gerbers.json",
             "analyze_gerbers_json", r,
         )
-        r.data = data
+        r.data = _compact(data)
 
 
 @analyze_app.command("cross")
@@ -243,7 +346,7 @@ def analyze_cross_cmd(
             data, Path(out) if out else None,
             f"{proj.name}-analyze-cross.json", "analyze_cross_json", r,
         )
-        r.data = data
+        r.data = _compact(data)
 
 
 @analyze_app.command("thermal")
@@ -272,7 +375,7 @@ def analyze_thermal_cmd(
             data, Path(out) if out else None,
             f"{proj.name}-analyze-thermal.json", "analyze_thermal_json", r,
         )
-        r.data = data
+        r.data = _compact(data)
 
 
 @analyze_app.command("fab-gate")
@@ -301,7 +404,7 @@ def analyze_fab_gate_cmd(
             data, Path(out) if out else None,
             f"{proj.name}-analyze-fab-gate.json", "analyze_fab_gate_json", r,
         )
-        r.data = data
+        r.data = _compact(data)
 
 
 @analyze_app.command("whatif")
@@ -339,7 +442,7 @@ def analyze_whatif_cmd(
             data, Path(out) if out else None,
             f"{proj.name}-analyze-whatif.json", "analyze_whatif_json", r,
         )
-        r.data = data
+        r.data = _compact(data)
 
 
 @analyze_app.command("lifecycle")
@@ -372,7 +475,7 @@ def analyze_lifecycle_cmd(
             data, Path(out) if out else None,
             f"{proj.name}-analyze-lifecycle.json", "analyze_lifecycle_json", r,
         )
-        r.data = data
+        r.data = _compact(data)
 
 
 @analyze_app.command("diff")
@@ -401,4 +504,4 @@ def analyze_diff_cmd(
             data, Path(out) if out else None,
             "analyze-diff.json", "analyze_diff_json", r,
         )
-        r.data = data
+        r.data = _compact(data)

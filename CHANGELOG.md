@@ -166,6 +166,15 @@ Initial alpha release.
   now fires only after a real write, and `delete_tracks` / `modify_tracks`
   skip `board.save()` entirely when the selection is empty. Round-3 field
   report B14.
+- `kcd analyze *` no longer overruns the 1MB MCP result cap. Every
+  `analyze` subcommand inlined the entire analyzer JSON (full BOM, every
+  net, every track, dependency graphs) into `data` — a 58-component
+  board's `analyze sch` was hard-rejected as too large. The inline
+  envelope is now folded: `findings` group by `(rule_id, severity)` with a
+  3-occurrence sample, the headline `summary` / `trust_summary` ride
+  verbatim, and bulk sections spill (named in `data.spilled.sections`).
+  The artifact always holds the complete analyzer JSON. Round-3 field
+  report B2.
 
 ### Known limitations
 - Diff-pair length tuning: not implemented
