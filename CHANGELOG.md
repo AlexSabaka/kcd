@@ -31,6 +31,11 @@ Initial alpha release.
   rename it checks the live PCB for the stale old net name and instructs
   F8 / `kcd sync` (KiCad 10 exposes no headless forward annotation)
 - `kcd edit move-fp` — PCB footprint move via kipy IPC
+- `kcd edit track delete|modify` — PCB copper track editing via kipy IPC:
+  delete tracks, or change their width / layer / net assignment. Tracks
+  are selected by whole net (`--net`) or a single segment (`--from`/`--to`,
+  either direction), optionally narrowed by `--layer`. Requires KiCad open
+  with the PCB editor; persists via `board.save()` (move-fp caveat applies)
 - `kcd net list|pcb|of|trace` — net queries: `net list` names schematic
   nets, `net pcb` lists board nets with pad/track counts, `net of` returns
   the pads/tracks/vias/zones on a net (`pcb`/`of` via kipy IPC), `net trace`

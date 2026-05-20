@@ -625,3 +625,88 @@ def move_fp(
         )
         from kcd.adapters import kipy_pcb
         r.data = {"updated": kipy_pcb.move_footprint(ref, x, y, rotation)}
+
+
+# ---------------------------------------------------------------------------
+# PCB copper edits — tracks, vias, zones (kipy IPC)
+# ---------------------------------------------------------------------------
+
+_BOARD_SAVE_WARNING = (
+    "This command calls board.save() — any unsaved changes you have open in "
+    "KiCad's PCB editor are persisted along with this edit. kipy 0.7.1 has no "
+    "dirty-check API; save or revert in the editor before running mutating "
+    "IPC commands."
+)
+
+track_app = typer.Typer(help="Delete or modify copper tracks on the PCB (kipy IPC).")
+
+
+@track_app.command("delete")
+def track_delete(
+    project: str = typer.Argument(
+        None,
+        help="Project path. Omit to auto-detect from the board open in KiCad.",
+    ),
+    net: str = typer.Option(None, "--net", help="Select every track on this net"),
+    from_: str = typer.Option(None, "--from", help="Segment start 'x,y' in mm"),
+    to: str = typer.Option(None, "--to", help="Segment end 'x,y' in mm"),
+    layer: str = typer.Option(None, "--layer", help="Narrow selection to a layer, e.g. F.Cu"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Delete copper tracks. Requires KiCad open with the PCB editor.
+
+    Select a whole net with --net, or one segment with --from/--to; --layer
+    narrows either. Use `kcd net of` to discover segment coordinates first.
+
+    Note: calls board.save() — see the warning emitted on every run.
+    """
+    with run_command("edit.track.delete", json_) as r:
+        start = _parse_xy(from_) if from_ else None
+        end = _parse_xy(to) if to else None
+        proj, r.snapshot_before = _pre_edit(
+            project, "delete track(s)", no_snapshot, auto=True
+        )
+        r.warn(_BOARD_SAVE_WARNING)
+        from kcd.adapters import kipy_pcb
+        r.data = kipy_pcb.delete_tracks(proj.pcb, net, start, end, layer)
+
+
+@track_app.command("modify")
+def track_modify(
+    project: str = typer.Argument(
+        None,
+        help="Project path. Omit to auto-detect from the board open in KiCad.",
+    ),
+    net: str = typer.Option(None, "--net", help="Select every track on this net"),
+    from_: str = typer.Option(None, "--from", help="Segment start 'x,y' in mm"),
+    to: str = typer.Option(None, "--to", help="Segment end 'x,y' in mm"),
+    layer: str = typer.Option(None, "--layer", help="Narrow selection to a layer"),
+    width: float = typer.Option(None, "--width", help="New track width in mm"),
+    set_layer: str = typer.Option(None, "--set-layer", help="Move tracks to this layer"),
+    set_net: str = typer.Option(None, "--set-net", help="Reassign tracks to this net"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Modify copper tracks — width, layer, or net. Requires KiCad open.
+
+    Selection (--net / --from/--to / --layer) is separate from the changes
+    (--width / --set-layer / --set-net); pass at least one of each.
+
+    Note: calls board.save() — see the warning emitted on every run.
+    """
+    with run_command("edit.track.modify", json_) as r:
+        start = _parse_xy(from_) if from_ else None
+        end = _parse_xy(to) if to else None
+        proj, r.snapshot_before = _pre_edit(
+            project, "modify track(s)", no_snapshot, auto=True
+        )
+        r.warn(_BOARD_SAVE_WARNING)
+        from kcd.adapters import kipy_pcb
+        r.data = kipy_pcb.modify_tracks(
+            proj.pcb, net, start, end, layer,
+            width_mm=width, set_layer=set_layer, set_net=set_net,
+        )
+
+
+edit_app.add_typer(track_app, name="track")

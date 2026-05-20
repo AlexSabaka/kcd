@@ -149,6 +149,8 @@ kcd edit net           <proj> --from <OLD> --to <NEW> [--json]   # lib_id-aware 
 
 # Change (PCB - needs KiCad open via IPC)
 kcd edit move-fp <proj> --ref R5 --x 100 --y 50 [--rotation 90] [--json]
+kcd edit track delete <proj> [--net N] [--from X,Y] [--to X,Y] [--layer L] [--json]
+kcd edit track modify <proj> [--net N] [--from X,Y] [--to X,Y] --width W [--set-layer L] [--set-net N] [--json]
 
 # Validate
 kcd drc    <proj> [--json]

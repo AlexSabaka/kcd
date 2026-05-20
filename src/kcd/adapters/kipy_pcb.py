@@ -475,6 +475,73 @@ def add_track(
     }
 
 
+def delete_tracks(
+    expected_pcb: _Path,
+    net: str | None = None,
+    from_mm: tuple[float, float] | None = None,
+    to_mm: tuple[float, float] | None = None,
+    layer: str | None = None,
+) -> dict[str, Any]:
+    """Delete copper tracks from the open board.
+
+    Selection (see `_match_tracks`): `from_mm` + `to_mm` picks the matching
+    segment(s); `net` alone selects every track on the net; `layer` narrows
+    either. Persists via `board.save()` — see the move-fp caveat.
+    """
+    assert_board_is(expected_pcb)
+    board = get_board()
+    tracks = _match_tracks(board, net, from_mm, to_mm, layer)
+    deleted = [_track_summary(t) for t in tracks]
+    board.remove_items(tracks)
+    board.save()
+    return {"deleted": deleted, "count": len(deleted)}
+
+
+def modify_tracks(
+    expected_pcb: _Path,
+    net: str | None = None,
+    from_mm: tuple[float, float] | None = None,
+    to_mm: tuple[float, float] | None = None,
+    layer: str | None = None,
+    *,
+    width_mm: float | None = None,
+    set_layer: str | None = None,
+    set_net: str | None = None,
+) -> dict[str, Any]:
+    """Modify copper tracks — width, layer, and/or net assignment.
+
+    Selection is the same as `delete_tracks`; the `set_*` / `width_mm`
+    arguments are the changes to apply. Persists via `board.save()`.
+    """
+    if width_mm is None and set_layer is None and set_net is None:
+        raise CommandError(
+            "nothing_to_do",
+            "Specify at least one change: --width, --set-layer, or --set-net.",
+        )
+    assert_board_is(expected_pcb)
+    board = get_board()
+    tracks = _match_tracks(board, net, from_mm, to_mm, layer)
+
+    new_net = None
+    if set_net is not None:
+        nets = {n.name: n for n in board.get_nets()}
+        if set_net not in nets:
+            raise LookupError(f"Net {set_net!r} not found on board")
+        new_net = nets[set_net]
+    new_layer = _layer_enum(set_layer) if set_layer is not None else None
+
+    for t in tracks:
+        if width_mm is not None:
+            t.width = _mm_to_nm(width_mm)
+        if new_layer is not None:
+            t.layer = new_layer
+        if new_net is not None:
+            t.net = new_net
+    board.update_items(tracks)
+    board.save()
+    return {"modified": [_track_summary(t) for t in tracks], "count": len(tracks)}
+
+
 def revert_board() -> None:
     """Force KiCad to discard in-memory board state and reload from disk.
 
@@ -593,3 +660,99 @@ def _safe(fn, default):
         return fn()
     except Exception:
         return default
+
+
+# Endpoint-match tolerance for track selection (nm) — forgiving of
+# human-entered coordinates, far below any real track geometry.
+_TRACK_MATCH_TOL_NM = 50_000
+
+
+def _layer_enum(name: str) -> int:
+    """Resolve a KiCad layer name (`"F.Cu"`) to its kipy BoardLayer enum value.
+
+    The inverse of `_layer_name`: `F.Cu` -> proto `BL_F_Cu` -> enum int.
+
+    Raises:
+        CommandError(code="bad_layer"): the name resolves to no known layer.
+    """
+    try:
+        from kipy.proto.board.board_types_pb2 import BoardLayer  # type: ignore[import-untyped]
+        return int(BoardLayer.Value("BL_" + name.replace(".", "_")))
+    except (ImportError, ValueError) as e:
+        raise CommandError(
+            "bad_layer",
+            f"Unknown board layer {name!r} — expected e.g. 'F.Cu', 'B.Cu', "
+            "'In1.Cu'.",
+        ) from e
+
+
+def _pt_near(point: Any, xy_nm: tuple[int, int]) -> bool:
+    """True if a kipy point is within tolerance of an (x, y) nm pair."""
+    return (
+        abs(int(point.x) - xy_nm[0]) <= _TRACK_MATCH_TOL_NM
+        and abs(int(point.y) - xy_nm[1]) <= _TRACK_MATCH_TOL_NM
+    )
+
+
+def _track_endpoints_match(
+    track: Any, from_nm: tuple[int, int], to_nm: tuple[int, int]
+) -> bool:
+    """True if a track's two endpoints match `from`/`to` in either direction."""
+    s, e = track.start, track.end
+    return (_pt_near(s, from_nm) and _pt_near(e, to_nm)) or (
+        _pt_near(s, to_nm) and _pt_near(e, from_nm)
+    )
+
+
+def _match_tracks(
+    board: Any,
+    net: str | None,
+    from_mm: tuple[float, float] | None,
+    to_mm: tuple[float, float] | None,
+    layer: str | None,
+) -> list[Any]:
+    """Select tracks on the open board for delete/modify.
+
+    `from_mm` + `to_mm` → the segment(s) whose endpoints match (either
+    direction); `net` alone → every track on that net; `layer` further
+    filters either case.
+
+    Raises:
+        CommandError(code="bad_selector"): selectors are missing or partial.
+        CommandError(code="not_found"): nothing matched.
+    """
+    if (from_mm is None) != (to_mm is None):
+        raise CommandError(
+            "bad_selector", "--from and --to must be given together."
+        )
+    if from_mm is None and net is None:
+        raise CommandError(
+            "bad_selector",
+            "Specify --net (whole net) or --from/--to (one segment).",
+        )
+
+    tracks = list(board.get_tracks())
+    if net is not None:
+        tracks = [t for t in tracks if _net_name(t) == net]
+    if layer is not None:
+        want = _layer_enum(layer)
+        tracks = [t for t in tracks if int(t.layer) == want]
+    if from_mm is not None and to_mm is not None:
+        from_nm = (_mm_to_nm(from_mm[0]), _mm_to_nm(from_mm[1]))
+        to_nm = (_mm_to_nm(to_mm[0]), _mm_to_nm(to_mm[1]))
+        tracks = [t for t in tracks if _track_endpoints_match(t, from_nm, to_nm)]
+
+    if not tracks:
+        raise CommandError("not_found", "No track matched the given selectors.")
+    return tracks
+
+
+def _track_summary(track: Any) -> dict[str, Any]:
+    """Serialize a kipy Track/ArcTrack into a plain dict (cf. `list_tracks`)."""
+    return {
+        "net": _net_name(track),
+        "layer": _layer_name(track.layer),
+        "width_mm": _nm_to_mm(track.width),
+        "start": {"x_mm": _nm_to_mm(track.start.x), "y_mm": _nm_to_mm(track.start.y)},
+        "end": {"x_mm": _nm_to_mm(track.end.x), "y_mm": _nm_to_mm(track.end.y)},
+    }
