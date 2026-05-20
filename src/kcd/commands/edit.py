@@ -11,7 +11,7 @@ from pathlib import Path
 
 import typer
 
-from kcd.adapters import kicad_cli, skip_sch, symbol_lib
+from kcd.adapters import kicad_cli, kicad_pro, skip_sch, symbol_lib
 from kcd.core import config as cfg_mod
 from kcd.core.output import CommandError, Result, run_command
 from kcd.core.project import Project, resolve, resolve_or_active
@@ -601,6 +601,42 @@ def rename_net(
             r.warn(f"PCB drift check skipped: {e}")
 
         _post_edit_sch(proj, r, mtimes, no_render=no_render)
+
+
+# ---------------------------------------------------------------------------
+# Design rules — .kicad_pro board constraints
+# ---------------------------------------------------------------------------
+
+@edit_app.command("designrules")
+def designrules(
+    project: str = typer.Argument(...),
+    rule: str = typer.Option(..., "--rule", help="Constraint key, e.g. min_track_width"),
+    value: str = typer.Option(
+        ..., "--value", help="New value — mm for distances, true/false for flags"
+    ),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Set a board design-rule constraint in the .kicad_pro file.
+
+    Mutates `board.design_settings.rules` — the constraint minimums DRC
+    enforces (clearance, track width, via/hole sizes, ...). Run with an
+    unknown --rule to see the valid keys.
+
+    Note: if KiCad has this project open it caches project settings in memory
+    and will overwrite this edit on its next save. Close the project in KiCad
+    (or reopen it) for the change to stick.
+    """
+    with run_command("edit.designrules", json_) as r:
+        proj, r.snapshot_before = _pre_edit(
+            project, f"designrule {rule}={value}", no_snapshot
+        )
+        r.warn(
+            "If KiCad has this project open it caches project settings and "
+            "may overwrite this change on its next save — close or reopen the "
+            "project in KiCad."
+        )
+        r.data = {"updated": kicad_pro.set_design_rule(proj.pro, rule, value)}
 
 
 # ---------------------------------------------------------------------------

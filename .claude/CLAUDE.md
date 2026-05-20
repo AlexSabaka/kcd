@@ -146,6 +146,7 @@ kcd edit netlabel delete <proj> --text NET [--at X,Y] [--json]
 kcd edit add-symbol    <proj> --lib-id Device:C --ref C5 [--value V] [--at X,Y] [--json]
 kcd edit symbol        <proj> --ref U1 --to-lib-id <lib:sym> [--pin-map "1=2,..."] [--json]
 kcd edit net           <proj> --from <OLD> --to <NEW> [--json]   # lib_id-aware net rename
+kcd edit designrules   <proj> --rule <key> --value <v> [--json]  # .kicad_pro DRC constraint
 
 # Change (PCB - needs KiCad open via IPC)
 kcd edit move-fp <proj> --ref R5 --x 100 --y 50 [--rotation 90] [--json]

@@ -30,6 +30,13 @@ Initial alpha release.
   reverted by "Update Symbols from Library"). Root sheet only; after the
   rename it checks the live PCB for the stale old net name and instructs
   F8 / `kcd sync` (KiCad 10 exposes no headless forward annotation)
+- `kcd edit designrules` — set a board design-rule constraint in the
+  `.kicad_pro` file: mutates a `board.design_settings.rules` key (the DRC
+  constraint minimums — clearance, track width, via/hole sizes). Validates the
+  rule name against the KiCad 10 constraint set and coerces the value to the
+  rule's type (mm float, int, or flag); creates the nested settings path when
+  a freshly-templated project lacks it. Offline JSON edit — warns that KiCad,
+  if it has the project open, may overwrite the change on its next save
 - `kcd edit move-fp` — PCB footprint move via kipy IPC
 - `kcd edit track delete|modify` — PCB copper track editing via kipy IPC:
   delete tracks, or change their width / layer / net assignment. Tracks
