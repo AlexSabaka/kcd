@@ -9,11 +9,14 @@ Reference: https://github.com/psychogenic/kicad-skip
 
 from __future__ import annotations
 
+import copy
 import json
 import re
+import uuid as _uuid
 from pathlib import Path
 from typing import Any
 
+from kcd.core import sexp
 from kcd.core.project import Project
 
 
@@ -240,6 +243,82 @@ def delete_label(
         deleted.append({"text": text, "at": pos, "kind": kind})
     sch.write(str(sch_path))
     return {"deleted": deleted}
+
+
+def add_symbol_from_clone(
+    sch_path: Path,
+    like_ref: str,
+    new_ref: str,
+    value: str | None = None,
+    at: tuple[float, float] | None = None,
+) -> dict[str, Any]:
+    """Add a symbol by cloning an existing instance (`like_ref`).
+
+    The fast path when the project already has the part type — kicad-skip
+    deep-copies the symbol (regenerating UUIDs); we then re-reference,
+    optionally re-value and reposition it. Raises SchEditError if `like_ref`
+    isn't present.
+    """
+    sch = _load(sch_path)
+    src = None
+    for sym in sch.symbol:
+        if _prop(sym, "Reference") == like_ref:
+            src = sym
+            break
+    if src is None:
+        raise SchEditError(f"Symbol {like_ref!r} not found in {sch_path.name}")
+
+    clone = src.clone()
+    clone.setAllReferences(new_ref)
+    if value is not None:
+        clone.property.Value.value = value
+    if at is not None:
+        clone.move(at[0], at[1])
+    sch.write(str(sch_path))
+    info = _symbol_to_dict(clone)
+    info["source"] = "clone"
+    return info
+
+
+def add_symbol_from_library(
+    sch_path: Path,
+    project_name: str,
+    lib_id: str,
+    definition: list,
+    pins: list[dict[str, str]],
+    new_ref: str,
+    value: str | None,
+    at: tuple[float, float],
+) -> dict[str, Any]:
+    """Add a symbol of a part type not yet present in the project.
+
+    Embeds the `lib_symbols` definition (from `symbol_lib.find_symbol`) when
+    absent, then appends a fresh instance — all via raw S-expr (`core/sexp`),
+    so a brand-new part type needs no existing instance to clone.
+    """
+    tree = sexp.parse(sch_path.read_text())
+    root_uuid = _sexp_child_value(tree, "uuid") or ""
+    lib_symbols = _sexp_child(tree, "lib_symbols")
+    if lib_symbols is None:
+        raise SchEditError(f"{sch_path.name} has no lib_symbols block")
+
+    if not _sexp_has_symbol(lib_symbols, lib_id):
+        entry = copy.deepcopy(definition)
+        entry[1] = sexp.Quoted(lib_id)
+        lib_symbols.append(entry)
+
+    instance = _build_symbol_instance(
+        lib_id, new_ref, value or "", at, pins, project_name, root_uuid
+    )
+    tree.append(instance)
+    sch_path.write_text(sexp.dumps(tree))
+    return {
+        "reference": new_ref,
+        "lib_id": lib_id,
+        "value": value or "",
+        "at": [at[0], at[1]],
+        "source": "library",
+    }
 
 
 def sheet_index(proj: Project) -> list[dict[str, Any]]:
@@ -546,6 +625,76 @@ def _label_xy(label: Any) -> list[float]:
 
 def _fmt_xy(xy: tuple[float, float]) -> str:
     return f"{xy[0]},{xy[1]}"
+
+
+def _sexp_child(node: list, key: str) -> list | None:
+    """First child sub-list of `node` whose head is `key`."""
+    for child in node:
+        if isinstance(child, list) and child and child[0] == key:
+            return child
+    return None
+
+
+def _sexp_child_value(node: list, key: str) -> str | None:
+    child = _sexp_child(node, key)
+    return str(child[1]) if child is not None and len(child) >= 2 else None
+
+
+def _sexp_has_symbol(lib_symbols: list, lib_id: str) -> bool:
+    for child in lib_symbols:
+        if (
+            isinstance(child, list)
+            and len(child) >= 2
+            and child[0] == "symbol"
+            and child[1] == lib_id
+        ):
+            return True
+    return False
+
+
+def _build_symbol_instance(
+    lib_id: str,
+    ref: str,
+    value: str,
+    at: tuple[float, float],
+    pins: list[dict[str, str]],
+    project_name: str,
+    root_uuid: str,
+) -> list:
+    """Construct a `(symbol ...)` instance node for a `.kicad_sch`."""
+    q = sexp.Quoted
+    x, y = str(at[0]), str(at[1])
+
+    def prop(name: str, val: str, hide: bool = False) -> list:
+        effects: list = ["effects", ["font", ["size", "1.27", "1.27"]]]
+        if hide:
+            effects.append(["hide", "yes"])
+        return ["property", q(name), q(val), ["at", x, y, "0"], effects]
+
+    node: list = [
+        "symbol",
+        ["lib_id", q(lib_id)],
+        ["at", x, y, "0"],
+        ["unit", "1"],
+        ["exclude_from_sim", "no"],
+        ["in_bom", "yes"],
+        ["on_board", "yes"],
+        ["dnp", "no"],
+        ["uuid", q(str(_uuid.uuid4()))],
+        prop("Reference", ref),
+        prop("Value", value),
+        prop("Footprint", "", hide=True),
+        prop("Datasheet", "~", hide=True),
+    ]
+    for pin in pins:
+        node.append(["pin", q(pin["number"]), ["uuid", q(str(_uuid.uuid4()))]])
+    node.append([
+        "instances",
+        ["project", q(project_name),
+            ["path", q("/" + root_uuid),
+                ["reference", q(ref)], ["unit", "1"]]],
+    ])
+    return node
 
 
 def _iter_symbol_pins(sym: Any):

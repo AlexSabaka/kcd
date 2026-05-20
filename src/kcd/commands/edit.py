@@ -11,7 +11,7 @@ from pathlib import Path
 
 import typer
 
-from kcd.adapters import kicad_cli, skip_sch
+from kcd.adapters import kicad_cli, skip_sch, symbol_lib
 from kcd.core import config as cfg_mod
 from kcd.core.output import CommandError, Result, run_command
 from kcd.core.project import Project, resolve, resolve_or_active
@@ -331,6 +331,50 @@ def netlabel_delete(
 
 edit_app.add_typer(wire_app, name="wire")
 edit_app.add_typer(netlabel_app, name="netlabel")
+
+
+@edit_app.command("add-symbol")
+def add_symbol(
+    project: str = typer.Argument(...),
+    lib_id: str = typer.Option(..., "--lib-id", help="Library:Symbol, e.g. Device:C"),
+    ref: str = typer.Option(..., "--ref", help="Reference for the new symbol, e.g. C5"),
+    value: str = typer.Option(None, "--value", help="Value (default: the library symbol's)"),
+    at: str = typer.Option(None, "--at", help="Position 'X,Y' in mm (default: 100,100)"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Add a component to the root schematic sheet.
+
+    If the project already has the part type, an existing instance is cloned;
+    otherwise the symbol is resolved from a library and embedded.
+    """
+    with run_command("edit.add-symbol", json_) as r:
+        pos = _parse_xy(at) if at else (100.0, 100.0)
+        proj = resolve(project)
+        symbols = skip_sch.list_symbols(proj.sch)
+        if any(s.get("reference") == ref for s in symbols):
+            raise CommandError(
+                "duplicate_ref", f"Reference {ref!r} already exists in the schematic."
+            )
+        like = next((s["reference"] for s in symbols if s.get("lib_id") == lib_id), None)
+
+        _, r.snapshot_before = _pre_edit(
+            project, f"add symbol {ref} ({lib_id})", no_snapshot
+        )
+        mtimes = skip_sch.snapshot_sheet_mtimes(proj)
+        if like is not None:
+            added = skip_sch.add_symbol_from_clone(
+                proj.sch, like, ref, value, pos if at else None
+            )
+        else:
+            info = symbol_lib.find_symbol(lib_id, proj)
+            added = skip_sch.add_symbol_from_library(
+                proj.sch, proj.name, lib_id, info["definition"], info["pins"],
+                ref, value or info["properties"].get("Value", ""), pos,
+            )
+        r.data = {"added": added}
+        _post_edit_sch(proj, r, mtimes, no_render=no_render)
 
 
 # ---------------------------------------------------------------------------

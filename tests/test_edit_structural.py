@@ -14,9 +14,10 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from kcd.commands.edit import netlabel_app, wire_app
+from kcd.commands.edit import edit_app, netlabel_app, wire_app
 
 _NET_FIXTURE = Path(__file__).parent / "fixtures" / "net"
+_LIB_FIXTURE = Path(__file__).parent / "fixtures" / "lib"
 _OFFLINE = ["--no-snapshot", "--no-render", "--json"]
 
 
@@ -123,3 +124,67 @@ def test_netlabel_delete_ambiguous_needs_at(proj: Path) -> None:
         netlabel_app, ["delete", str(proj), "--text", "DUP", "--at", "10,10", *_OFFLINE]
     )
     assert ok.exit_code == 0, ok.stdout
+
+
+# ---------------------------------------------------------------------------
+# add-symbol
+# ---------------------------------------------------------------------------
+
+def _refs(proj: Path) -> set[str]:
+    return {s.property.Reference.value for s in _sch(proj).symbol}
+
+
+def test_add_symbol_clone_path(proj: Path) -> None:
+    """A part type already in the project is added by cloning an instance."""
+    runner = CliRunner()
+    r = runner.invoke(edit_app, [
+        "add-symbol", str(proj), "--lib-id", "Device:R",
+        "--ref", "R7", "--value", "1k", "--at", "70,70", *_OFFLINE,
+    ])
+    assert r.exit_code == 0, r.stdout
+    assert json.loads(r.stdout)["data"]["added"]["source"] == "clone"
+    assert "R7" in _refs(proj)
+
+
+def test_add_symbol_library_path(proj: Path, monkeypatch) -> None:
+    """A part type not in the project is embedded from a library."""
+    monkeypatch.setenv("KCD_SYMBOL_DIR", str(_LIB_FIXTURE))
+    runner = CliRunner()
+    r = runner.invoke(edit_app, [
+        "add-symbol", str(proj), "--lib-id", "mylib:Q_NPN",
+        "--ref", "Q1", "--value", "2N3904", "--at", "80,80", *_OFFLINE,
+    ])
+    assert r.exit_code == 0, r.stdout
+    assert json.loads(r.stdout)["data"]["added"]["source"] == "library"
+    sch = _sch(proj)
+    assert "Q1" in {s.property.Reference.value for s in sch.symbol}
+    # the lib_symbols block gained the new type
+    assert hasattr(sch.lib_symbols, "mylib_Q_NPN")
+
+
+def test_add_symbol_duplicate_ref(proj: Path) -> None:
+    runner = CliRunner()
+    r = runner.invoke(edit_app, [
+        "add-symbol", str(proj), "--lib-id", "Device:R", "--ref", "R1", *_OFFLINE,
+    ])
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "duplicate_ref"
+
+
+def test_add_symbol_bad_lib_id(proj: Path) -> None:
+    runner = CliRunner()
+    r = runner.invoke(edit_app, [
+        "add-symbol", str(proj), "--lib-id", "NoColon", "--ref", "X1", *_OFFLINE,
+    ])
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "invalid_lib_id"
+
+
+def test_add_symbol_unknown_part(proj: Path, monkeypatch) -> None:
+    monkeypatch.setenv("KCD_SYMBOL_DIR", str(_LIB_FIXTURE))
+    runner = CliRunner()
+    r = runner.invoke(edit_app, [
+        "add-symbol", str(proj), "--lib-id", "mylib:Ghost", "--ref", "X1", *_OFFLINE,
+    ])
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "not_found"

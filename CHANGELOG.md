@@ -16,6 +16,9 @@ Initial alpha release.
 - `kcd edit wire add|delete`, `kcd edit netlabel add|delete` — structural
   schematic edits: add/remove wire segments and local/global net labels on
   the root sheet (kicad-skip)
+- `kcd edit add-symbol` — place a component on the root sheet: clones an
+  existing instance when the project already has the part type, otherwise
+  embeds the symbol definition from a library (Wave 3 resolution)
 - `kcd edit move-fp` — PCB footprint move via kipy IPC
 - `kcd net list|pcb|of|trace` — net queries: `net list` names schematic
   nets, `net pcb` lists board nets with pad/track counts, `net of` returns
