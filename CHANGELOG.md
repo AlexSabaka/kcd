@@ -236,6 +236,13 @@ Initial alpha release.
   fab rejects — with no warning. `export gerber` now also writes the drill
   files into the same directory (`data.drill_included: true`); the standalone
   `export drill` stays for drill-only exports. Round-5 field report R5-4.
+- `kcd analyze *` inline envelopes are now genuinely small. The fold from
+  Round-3 B2 was budget-driven but the budgets were too loose
+  (`_TOTAL_BUDGET` 96 KB, `_VALUE_BUDGET` 24 KB), so an `analyze pcb` with
+  several mid-size sections still came back enormous inline. The budgets are
+  retuned (40 KB total, 8 KB per section) so bulk sections actually spill,
+  and a spilled list now keeps a 3-entry `sample` (when it fits 2 KB) so the
+  inline envelope still shows representative rows. Round-5 field report B2.
 
 ### Known limitations
 - Diff-pair length tuning: not implemented

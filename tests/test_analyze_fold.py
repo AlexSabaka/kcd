@@ -45,7 +45,7 @@ def _big_report() -> dict:
                 "detail": f"thin decoupling {i}"} for i in range(5)]
             + [{"severity": "info", "rule_id": "CG-AUD", "detail": "ground ok"}]
         ),
-        # bom + nets are the bulk — each well over _VALUE_BUDGET (24k chars).
+        # bom + nets are the bulk — each well over _VALUE_BUDGET (8k chars).
         "bom": [{"ref": f"R{i}", "value": "10k", "blob": "x" * 400}
                 for i in range(200)],
         "nets": [{"name": f"N{i}", "pins": list(range(60))}
@@ -83,9 +83,22 @@ def test_compact_folds_findings_by_rule_and_severity() -> None:
 def test_compact_spills_bulk_sections() -> None:
     data = _compact(_big_report())
     assert set(data["spilled"]["sections"]) == {"bom", "nets"}
-    # a spilled list keeps a count stub so the agent still sees the size
-    assert data["bom"] == {"count": 200}
-    assert data["nets"] == {"count": 200}
+    # a spilled list keeps a count + a small representative sample
+    assert data["bom"]["count"] == 200
+    assert len(data["bom"]["sample"]) == 3
+    assert data["nets"]["count"] == 200
+    assert len(data["nets"]["sample"]) == 3
+
+
+def test_compact_spilled_list_omits_oversize_sample() -> None:
+    """A spilled list whose first entries alone bust _SAMPLE_BUDGET keeps
+    only the count — no sample."""
+    data = _compact({
+        "analyzer_type": "pcb",
+        "huge": [{"blob": "x" * 5_000} for _ in range(50)],
+    })
+    assert data["huge"]["count"] == 50
+    assert "sample" not in data["huge"]
 
 
 def test_compact_keeps_headline_and_scalars() -> None:
@@ -116,7 +129,7 @@ def test_analyze_sch_inline_is_small(monkeypatch, proj_dir: Path) -> None:
     out, _ = _invoke(proj_dir)
     inline = json.dumps(out["data"])
     raw = json.dumps(_big_report())
-    assert len(inline) < 96_000          # under the compaction budget
+    assert len(inline) < 40_000          # under the compaction budget
     assert len(inline) < len(raw) // 4   # and far smaller than the raw report
     assert out["data"]["spilled"]["sections"] == ["bom", "nets"]
 

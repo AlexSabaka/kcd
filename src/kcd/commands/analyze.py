@@ -87,9 +87,10 @@ def _lift_findings(data: dict, r: Result) -> None:
 # (rule_id, severity), and spills bulk sections. The artifact always holds the
 # complete analyzer JSON, so nothing is lost — only re-shaped for the envelope.
 
-_FOLD_SAMPLE = 3          # findings kept per (rule_id, severity) group
-_VALUE_BUDGET = 24_000    # max JSON chars for one inline section before it spills
-_TOTAL_BUDGET = 96_000    # max JSON chars for the whole compacted `data`
+_FOLD_SAMPLE = 3          # findings/list entries kept per group before spilling
+_VALUE_BUDGET = 8_000     # max JSON chars for one inline section before it spills
+_TOTAL_BUDGET = 40_000    # max JSON chars for the whole compacted `data`
+_SAMPLE_BUDGET = 2_000    # a spilled list keeps a sample only if it fits this
 
 _SEVERITY_RANK = {
     "critical": 0, "error": 1, "warning": 2,
@@ -168,7 +169,11 @@ def _compact(data: dict) -> dict:
         else:
             spilled.append(key)
             if isinstance(value, list):
-                out[key] = {"count": len(value)}
+                stub: dict = {"count": len(value)}
+                sample = value[:_FOLD_SAMPLE]
+                if sample and _jsize(sample) <= _SAMPLE_BUDGET:
+                    stub["sample"] = sample
+                out[key] = stub
 
     if spilled:
         out["spilled"] = {
