@@ -36,6 +36,10 @@ Initial alpha release.
   are selected by whole net (`--net`) or a single segment (`--from`/`--to`,
   either direction), optionally narrowed by `--layer`. Requires KiCad open
   with the PCB editor; persists via `board.save()` (move-fp caveat applies)
+- `kcd edit via add` — add a through-via on the PCB via kipy IPC: placed on
+  a net at a given point with configurable copper and drill diameter
+  (defaults 0.6 / 0.3 mm). Blind/buried vias are out of scope. Requires
+  KiCad open with the PCB editor; `board.save()` caveat applies
 - `kcd net list|pcb|of|trace` — net queries: `net list` names schematic
   nets, `net pcb` lists board nets with pad/track counts, `net of` returns
   the pads/tracks/vias/zones on a net (`pcb`/`of` via kipy IPC), `net trace`

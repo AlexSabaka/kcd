@@ -542,6 +542,45 @@ def modify_tracks(
     return {"modified": [_track_summary(t) for t in tracks], "count": len(tracks)}
 
 
+def add_via(
+    expected_pcb: _Path,
+    net_name: str,
+    at_mm: tuple[float, float],
+    diameter_mm: float = 0.6,
+    drill_mm: float = 0.3,
+) -> dict[str, Any]:
+    """Add a through-via to the open board.
+
+    Blind/buried vias are out of scope — they need an explicit layer pair.
+    Persists via `board.save()` — see the move-fp caveat.
+
+    Raises:
+        LookupError: no net by that name exists on the board.
+    """
+    from kipy.board_types import Via  # type: ignore[import-untyped]
+    from kipy.common_types import Vector2  # type: ignore[import-untyped]
+
+    assert_board_is(expected_pcb)
+    board = get_board()
+    nets = {n.name: n for n in board.get_nets()}
+    if net_name not in nets:
+        raise LookupError(f"Net {net_name!r} not found on board")
+
+    via = Via()
+    via.position = Vector2.from_xy(_mm_to_nm(at_mm[0]), _mm_to_nm(at_mm[1]))
+    via.net = nets[net_name]
+    via.diameter = _mm_to_nm(diameter_mm)
+    via.drill_diameter = _mm_to_nm(drill_mm)
+    board.create_items([via])
+    board.save()
+    return {
+        "net": net_name,
+        "at_mm": [at_mm[0], at_mm[1]],
+        "diameter_mm": diameter_mm,
+        "drill_mm": drill_mm,
+    }
+
+
 def revert_board() -> None:
     """Force KiCad to discard in-memory board state and reload from disk.
 

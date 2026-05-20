@@ -710,3 +710,44 @@ def track_modify(
 
 
 edit_app.add_typer(track_app, name="track")
+
+
+via_app = typer.Typer(help="Add vias to the PCB (kipy IPC).")
+
+
+@via_app.callback()
+def _via() -> None:
+    """Via operations. Keeps `via` a command group (`edit via add`) even
+    while `add` is its only subcommand."""
+
+
+@via_app.command("add")
+def via_add(
+    project: str = typer.Argument(
+        None,
+        help="Project path. Omit to auto-detect from the board open in KiCad.",
+    ),
+    net: str = typer.Option(..., "--net", help="Net the via connects"),
+    at: str = typer.Option(..., "--at", help="Via position 'x,y' in mm"),
+    diameter: float = typer.Option(0.6, "--diameter", help="Copper diameter in mm"),
+    drill: float = typer.Option(0.3, "--drill", help="Drill diameter in mm"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Add a through-via to the PCB. Requires KiCad open with the PCB editor.
+
+    Blind/buried vias are not supported — they need an explicit layer pair.
+
+    Note: calls board.save() — see the warning emitted on every run.
+    """
+    with run_command("edit.via.add", json_) as r:
+        pos = _parse_xy(at)
+        proj, r.snapshot_before = _pre_edit(
+            project, f"add via on {net}", no_snapshot, auto=True
+        )
+        r.warn(_BOARD_SAVE_WARNING)
+        from kcd.adapters import kipy_pcb
+        r.data = {"added": kipy_pcb.add_via(proj.pcb, net, pos, diameter, drill)}
+
+
+edit_app.add_typer(via_app, name="via")

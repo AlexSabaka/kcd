@@ -14,7 +14,7 @@ import pytest
 from typer.testing import CliRunner
 
 from kcd.adapters import kipy_pcb
-from kcd.commands.edit import track_app
+from kcd.commands.edit import track_app, via_app
 from kcd.core.ipc import IpcUnavailable
 from kcd.core.output import CommandError
 
@@ -168,3 +168,67 @@ def test_layer_enum_bad() -> None:
     with pytest.raises(CommandError) as exc:
         kipy_pcb._layer_enum("Bogus.Layer")
     assert exc.value.code == "bad_layer"
+
+
+# ---------------------------------------------------------------------------
+# edit via add — command layer (adapter monkeypatched)
+# ---------------------------------------------------------------------------
+
+def test_via_add_envelope(proj_dir: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        kipy_pcb, "add_via",
+        lambda *a, **k: {"net": "VCC", "at_mm": [100.0, 50.0]},
+    )
+    r = CliRunner().invoke(
+        via_app,
+        ["add", str(proj_dir), "--net", "VCC", "--at", "100,50",
+         "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    out = json.loads(r.stdout)
+    assert out["ok"] is True
+    assert out["command"] == "edit.via.add"
+    assert out["data"]["added"]["net"] == "VCC"
+    assert any("board.save()" in w for w in out["warnings"])
+
+
+def test_via_add_defaults_passed(proj_dir: Path, monkeypatch) -> None:
+    """--diameter / --drill default to 0.6 / 0.3 mm when omitted."""
+    captured: dict = {}
+
+    def fake_add_via(expected_pcb, net, at_mm, diameter_mm, drill_mm):
+        captured.update(diameter=diameter_mm, drill=drill_mm, at=at_mm)
+        return {"net": net}
+
+    monkeypatch.setattr(kipy_pcb, "add_via", fake_add_via)
+    r = CliRunner().invoke(
+        via_app,
+        ["add", str(proj_dir), "--net", "VCC", "--at", "100,50",
+         "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    assert captured == {"diameter": 0.6, "drill": 0.3, "at": (100.0, 50.0)}
+
+
+def test_via_add_bad_coordinate(proj_dir: Path) -> None:
+    r = CliRunner().invoke(
+        via_app,
+        ["add", str(proj_dir), "--net", "VCC", "--at", "notxy",
+         "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "bad_coordinate"
+
+
+def test_via_add_ipc_unavailable(proj_dir: Path, monkeypatch) -> None:
+    def boom(*a, **k):
+        raise IpcUnavailable("KiCad not running")
+
+    monkeypatch.setattr(kipy_pcb, "add_via", boom)
+    r = CliRunner().invoke(
+        via_app,
+        ["add", str(proj_dir), "--net", "VCC", "--at", "100,50",
+         "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "ipc_unavailable"
