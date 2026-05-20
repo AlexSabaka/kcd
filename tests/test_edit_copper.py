@@ -14,7 +14,7 @@ import pytest
 from typer.testing import CliRunner
 
 from kcd.adapters import kipy_pcb
-from kcd.commands.edit import track_app, via_app, zone_app
+from kcd.commands.edit import pcb_text_app, track_app, via_app, zone_app
 from kcd.core.ipc import IpcUnavailable
 from kcd.core.output import CommandError
 
@@ -345,3 +345,108 @@ def test_zone_delete_no_selector(proj_dir: Path) -> None:
     )
     assert r.exit_code == 1
     assert json.loads(r.stdout)["error"]["code"] == "bad_selector"
+
+
+# ---------------------------------------------------------------------------
+# edit pcb-text add / set — command layer (adapter monkeypatched) — R5-7
+# ---------------------------------------------------------------------------
+
+def test_pcb_text_add_envelope(proj_dir: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        kipy_pcb, "add_pcb_text",
+        lambda *a, **k: {"text": "REV-A", "layer": "F.SilkS"},
+    )
+    r = CliRunner().invoke(
+        pcb_text_app,
+        ["add", str(proj_dir), "--text", "REV-A", "--at", "10,20",
+         "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    out = json.loads(r.stdout)
+    assert out["ok"] is True
+    assert out["command"] == "edit.pcb-text.add"
+    assert out["data"]["added"]["text"] == "REV-A"
+    assert any("board.save()" in w for w in out["warnings"])
+
+
+def test_pcb_text_add_defaults_passed(proj_dir: Path, monkeypatch) -> None:
+    """Layer / size / thickness / rotation default when omitted."""
+    captured: dict = {}
+
+    def fake_add(expected_pcb, text, at_mm, layer, size, thickness, rotation):
+        captured.update(
+            at=at_mm, layer=layer, size=size,
+            thickness=thickness, rotation=rotation,
+        )
+        return {"text": text}
+
+    monkeypatch.setattr(kipy_pcb, "add_pcb_text", fake_add)
+    r = CliRunner().invoke(
+        pcb_text_app,
+        ["add", str(proj_dir), "--text", "REV-A", "--at", "10,20",
+         "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    assert captured == {
+        "at": (10.0, 20.0), "layer": "F.SilkS",
+        "size": 1.0, "thickness": 0.15, "rotation": 0.0,
+    }
+
+
+def test_pcb_text_add_bad_coordinate(proj_dir: Path) -> None:
+    r = CliRunner().invoke(
+        pcb_text_app,
+        ["add", str(proj_dir), "--text", "REV-A", "--at", "notxy",
+         "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "bad_coordinate"
+
+
+def test_pcb_text_add_ipc_unavailable(proj_dir: Path, monkeypatch) -> None:
+    def boom(*a, **k):
+        raise IpcUnavailable("KiCad not running")
+
+    monkeypatch.setattr(kipy_pcb, "add_pcb_text", boom)
+    r = CliRunner().invoke(
+        pcb_text_app,
+        ["add", str(proj_dir), "--text", "REV-A", "--at", "10,20",
+         "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "ipc_unavailable"
+
+
+def test_pcb_text_set_envelope(proj_dir: Path, monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_set(expected_pcb, match, new_value):
+        captured.update(match=match, new_value=new_value)
+        return {"match": match, "new_value": new_value, "layer": "F.SilkS"}
+
+    monkeypatch.setattr(kipy_pcb, "set_pcb_text", fake_set)
+    r = CliRunner().invoke(
+        pcb_text_app,
+        ["set", str(proj_dir), "--match", "REV-A", "--to", "REV-B",
+         "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    out = json.loads(r.stdout)
+    assert out["command"] == "edit.pcb-text.set"
+    assert out["data"]["updated"]["new_value"] == "REV-B"
+    assert captured == {"match": "REV-A", "new_value": "REV-B"}
+    assert any("board.save()" in w for w in out["warnings"])
+
+
+def test_pcb_text_set_ipc_unavailable(proj_dir: Path, monkeypatch) -> None:
+    def boom(*a, **k):
+        raise IpcUnavailable("KiCad not running")
+
+    monkeypatch.setattr(kipy_pcb, "set_pcb_text", boom)
+    r = CliRunner().invoke(
+        pcb_text_app,
+        ["set", str(proj_dir), "--match", "REV-A", "--to", "REV-B",
+         "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "ipc_unavailable"

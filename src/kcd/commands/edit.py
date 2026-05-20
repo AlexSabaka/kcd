@@ -1031,3 +1031,72 @@ def zone_delete(
 
 
 edit_app.add_typer(zone_app, name="zone")
+
+
+pcb_text_app = typer.Typer(help="Add or edit PCB silkscreen text (kipy IPC).")
+
+
+@pcb_text_app.command("add")
+def pcb_text_add(
+    project: str = typer.Argument(
+        None,
+        help="Project path. Omit to auto-detect from the board open in KiCad.",
+    ),
+    text: str = typer.Option(..., "--text", help="The text string to add"),
+    at: str = typer.Option(..., "--at", help="Text position 'x,y' in mm"),
+    layer: str = typer.Option(
+        "F.SilkS", "--layer", help="Board layer, e.g. F.SilkS / B.SilkS"
+    ),
+    size: float = typer.Option(1.0, "--size", help="Text height in mm"),
+    thickness: float = typer.Option(0.15, "--thickness", help="Stroke width in mm"),
+    rotation: float = typer.Option(0.0, "--rotation", help="Rotation in degrees"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Add a text item to the PCB. Requires KiCad open with the PCB editor.
+
+    Use this to place silkscreen markings (revision, board name) that
+    `analyze pcb` / `fab-gate` flag as missing.
+
+    Note: calls board.save() — see the warning emitted on every run.
+    """
+    with run_command("edit.pcb-text.add", json_) as r:
+        pos = _parse_xy(at)
+        proj = _pre_edit(
+            r, project, f"add pcb text {text!r}", no_snapshot, auto=True
+        )
+        from kcd.adapters import kipy_pcb
+        r.data = {"added": kipy_pcb.add_pcb_text(
+            proj.pcb, text, pos, layer, size, thickness, rotation
+        )}
+        r.warn(_BOARD_SAVE_WARNING)
+
+
+@pcb_text_app.command("set")
+def pcb_text_set(
+    project: str = typer.Argument(
+        None,
+        help="Project path. Omit to auto-detect from the board open in KiCad.",
+    ),
+    match: str = typer.Option(..., "--match", help="Current text string to find"),
+    to: str = typer.Option(..., "--to", help="New text string"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Replace a PCB text item, matched by its current string. Requires KiCad
+    open with the PCB editor.
+
+    Fails if several items share the string (ambiguous — edit it in KiCad).
+
+    Note: calls board.save() — see the warning emitted on every run.
+    """
+    with run_command("edit.pcb-text.set", json_) as r:
+        proj = _pre_edit(
+            r, project, f"set pcb text {match!r} -> {to!r}", no_snapshot, auto=True
+        )
+        from kcd.adapters import kipy_pcb
+        r.data = {"updated": kipy_pcb.set_pcb_text(proj.pcb, match, to)}
+        r.warn(_BOARD_SAVE_WARNING)
+
+
+edit_app.add_typer(pcb_text_app, name="pcb-text")

@@ -270,6 +270,13 @@ Initial alpha release.
   Round-5 field report R5-1.
 
 ### Added (continued)
+- `kcd edit pcb-text add|set` — add or edit free text on the PCB over live
+  IPC. `add` places a text item (silkscreen by default — `--layer`, `--size`,
+  `--thickness`, `--rotation`); `set` replaces an existing item matched by
+  its current string. This closes the gap where `revision_marking` /
+  `board_name` silk findings from `analyze pcb` / `fab-gate` had no
+  agentic fix — `edit text *` only touches the schematic. Requires KiCad
+  open with the PCB editor; calls `board.save()`. Round-5 field report R5-7.
 - `kcd render pcb` gains `--region-ref` / `--region-bbox` — render a cropped
   sub-area instead of the whole board, so fine placement (a 1 mm courtyard
   overlap, a part nudge) is actually visible. `--region-ref REF` centres a

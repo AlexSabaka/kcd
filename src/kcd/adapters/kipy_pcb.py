@@ -749,6 +749,75 @@ def add_zone(
     }
 
 
+def add_pcb_text(
+    expected_pcb: _Path,
+    text: str,
+    at_mm: tuple[float, float],
+    layer: str = "F.SilkS",
+    size_mm: float = 1.0,
+    thickness_mm: float = 0.15,
+    rotation_deg: float = 0.0,
+) -> dict[str, Any]:
+    """Add a free text item to the open board (e.g. a silkscreen marking).
+
+    Caveat: calls `board.save()` — kipy 0.7.1 has no dirty-check API, so this
+    persists any unsaved in-editor changes too; see `move_footprint`.
+    """
+    from kipy.board_types import BoardText
+    from kipy.common_types import Vector2
+
+    assert_board_is(expected_pcb)
+    board = get_board()
+    item = BoardText()
+    item.value = text
+    item.position = Vector2.from_xy(_mm_to_nm(at_mm[0]), _mm_to_nm(at_mm[1]))
+    item.layer = _layer_enum(layer)
+    attrs = item.attributes
+    attrs.size = Vector2.from_xy(_mm_to_nm(size_mm), _mm_to_nm(size_mm))
+    attrs.stroke_width = _mm_to_nm(thickness_mm)
+    attrs.angle = rotation_deg
+    board.create_items([item])
+    board.save()
+    return {
+        "text": text,
+        "at_mm": [at_mm[0], at_mm[1]],
+        "layer": layer,
+        "size_mm": size_mm,
+        "thickness_mm": thickness_mm,
+        "rotation_deg": rotation_deg,
+    }
+
+
+def set_pcb_text(expected_pcb: _Path, match: str, new_value: str) -> dict[str, Any]:
+    """Replace the string of an existing board text item, matched by value.
+
+    Raises `LookupError` if no item matches, or if several do (ambiguous —
+    edit it in KiCad). Caveat: calls `board.save()`; see `add_pcb_text`.
+    """
+    from kipy.board_types import BoardText
+
+    assert_board_is(expected_pcb)
+    board = get_board()
+    hits = [t for t in board.get_text()
+            if isinstance(t, BoardText) and t.value == match]
+    if not hits:
+        raise LookupError(f"No PCB text item with value {match!r} found on board")
+    if len(hits) > 1:
+        raise LookupError(
+            f"{len(hits)} PCB text items have value {match!r} — cannot "
+            "disambiguate; edit it in KiCad."
+        )
+    item = hits[0]
+    item.value = new_value
+    board.update_items([item])
+    board.save()
+    return {
+        "match": match,
+        "new_value": new_value,
+        "layer": _layer_name(item.layer),
+    }
+
+
 def delete_zones(
     expected_pcb: _Path,
     net: str | None = None,

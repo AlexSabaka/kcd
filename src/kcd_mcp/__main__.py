@@ -663,6 +663,57 @@ def kcd_edit_zone_delete(
     return _run(args)
 
 
+@mcp.tool()
+def kcd_edit_pcb_text_add(
+    text: str,
+    at: str,
+    layer: str = "F.SilkS",
+    size: float = 1.0,
+    thickness: float = 0.15,
+    rotation: float = 0.0,
+    project: str | None = None,
+    no_snapshot: bool = False,
+) -> dict[str, Any]:
+    """Add a text item (e.g. a silkscreen marking) to the PCB.
+
+    `at` is the position 'x,y' in mm; `layer` e.g. "F.SilkS" / "B.SilkS";
+    `size` is text height (mm), `thickness` the stroke width (mm). Requires
+    KiCad open with the PCB editor. Calls board.save() — persists any unsaved
+    PCB-editor changes too.
+    """
+    args = ["edit", "pcb-text", "add"]
+    if project:
+        args.append(project)
+    args += ["--text", text, "--at", at, "--layer", layer,
+             "--size", str(size), "--thickness", str(thickness),
+             "--rotation", str(rotation)]
+    if no_snapshot:
+        args.append("--no-snapshot")
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_edit_pcb_text_set(
+    match: str,
+    to: str,
+    project: str | None = None,
+    no_snapshot: bool = False,
+) -> dict[str, Any]:
+    """Replace a PCB text item, matched by its current string.
+
+    Fails if several items share the string (ambiguous). Requires KiCad open
+    with the PCB editor. Calls board.save() — persists any unsaved PCB-editor
+    changes too.
+    """
+    args = ["edit", "pcb-text", "set"]
+    if project:
+        args.append(project)
+    args += ["--match", match, "--to", to]
+    if no_snapshot:
+        args.append("--no-snapshot")
+    return _run(args)
+
+
 # ---------------------------------------------------------------------------
 # net (connectivity queries)
 # ---------------------------------------------------------------------------

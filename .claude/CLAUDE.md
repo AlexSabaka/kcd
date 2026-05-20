@@ -158,6 +158,8 @@ kcd edit track modify <proj> [--net N] [--from X,Y] [--to X,Y] --width W [--set-
 kcd edit via add      <proj> --net N --at X,Y [--diameter D] [--drill D] [--json]
 kcd edit zone add     <proj> --net N --layer L --rect X1,Y1,X2,Y2 [--priority P] [--clearance C] [--json]
 kcd edit zone delete  <proj> [--net N] [--layer L] [--json]
+kcd edit pcb-text add <proj> --text T --at X,Y [--layer F.SilkS] [--size MM] [--thickness MM] [--rotation DEG] [--json]
+kcd edit pcb-text set <proj> --match OLD --to NEW [--json]   # edit existing PCB text (silk revision/board-name)
 
 # Validate
 kcd drc    <proj> [--full] [--json]   # violations folded by (type,severity); --full = every occurrence inline
