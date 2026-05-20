@@ -81,11 +81,18 @@ Initial alpha release.
   components to add/remove and net-membership changes (e.g. a `+12V`→`+BATT`
   rename `parity` is blind to). Cannot push headlessly (KiCad 10 exposes no
   forward-annotation API); emits the F8 "Update PCB from Schematic" instruction
-- `kcd analyze sch|pcb|gerbers` — knowledge-layer analysis via vendored
-  `aklofas/kicad-happy` (v1.3.1, MIT). Wraps the upstream analyzers in the
-  standard kcd JSON envelope; lifts findings with severity >= warning into
-  envelope `warnings[]`; saves raw analyzer JSON as artifact. Skill body at
-  `skills/kicad/SKILL.md` with reference docs under `skills/kicad/references/`.
+- `kcd analyze sch|pcb|gerbers|cross|thermal|fab-gate|whatif|lifecycle|diff`
+  — knowledge-layer analysis via the vendored `aklofas/kicad-happy` engine
+  (MIT). Every analyzer is wrapped in the standard kcd JSON envelope (and so
+  is an MCP tool): findings with severity >= warning lift into envelope
+  `warnings[]`, raw analyzer JSON saves as an artifact. `cross` / `thermal` /
+  `fab-gate` / `whatif` / `lifecycle` take a project and run the prerequisite
+  schematic/PCB analyzers internally; `diff` compares two saved runs;
+  `analyze pcb --full` runs the deep PCB pass. The analyzer engine lives at
+  `src/kcd/analyzers/` (shipped in the wheel as part of the `kcd` package);
+  the skill body is `skills/kicad/SKILL.md` — rewritten so the skill drives
+  entirely through `kcd` commands and runs in MCP-only environments — with
+  reference docs under `skills/kicad/references/`.
 - `kcd drc` / `kcd erc` — design and electrical rule checks via kicad-cli
 - `kcd route track` — single-track routing via kipy IPC
 - `kcd route freeroute` — FreeRouting orchestration via .dsn/.ses round-trip

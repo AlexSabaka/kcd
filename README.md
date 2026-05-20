@@ -46,7 +46,7 @@ kcd inspect  sch|pcb|ref
 kcd lib      show|list                       # symbol-library inspection
 kcd edit     value|ref|footprint|prop|delete|wire|netlabel|add-symbol|symbol|net|text|designrules|move-fp|delete-fp|track|via|zone
 kcd net      list|pcb|of|trace
-kcd analyze  sch|pcb|gerbers                # knowledge-layer (vendored kicad-happy)
+kcd analyze  sch|pcb|gerbers|cross|thermal|fab-gate|whatif|lifecycle|diff   # knowledge-layer (vendored kicad-happy)
 kcd parity   <proj>                          # schematic ↔ PCB reference drift
 kcd sync     <proj> [--check]                # export netlist; --check diffs vs live PCB
 kcd drc      [--json]

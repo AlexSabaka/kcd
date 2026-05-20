@@ -40,7 +40,7 @@ The tool operates on analyzer JSON produced by `analyze_schematic.py`. It never 
 ## CLI Reference
 
 ```
-python3 what_if.py <input> [changes...] [options]
+kcd analyze whatif <project> [changes...] [options]
 ```
 
 ### Positional Arguments

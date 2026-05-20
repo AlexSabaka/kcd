@@ -262,7 +262,7 @@ When working with a KiCad 5 legacy project, the analyzer handles most of the wor
 ### Step 1: Run the schematic analyzer
 
 ```bash
-python3 <skill-path>/scripts/analyze_schematic.py project.sch
+kcd analyze sch <project>
 ```
 
 The analyzer automatically parses `.lib` files (cache libraries and project libs), populates pin data, builds pin-to-net mapping, runs signal analysis, and detects subcircuits. Check the output for components with empty `pins` arrays — these are the ones missing `.lib` data.

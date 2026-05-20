@@ -20,50 +20,52 @@ description: >-
 
 ## Using this skill from kcd
 
-This skill is vendored into the kcd repo at `skills/kicad/` (originator:
-`aklofas/kicad-happy` — see `ATTRIBUTION.md`). The three top-billing analyzers
-are wrapped behind `kcd analyze` so the JSON envelope, artifact registration,
-and warning lifting all match the rest of the kcd CLI:
+This skill is vendored into the kcd repo (originator: `aklofas/kicad-happy`
+— see `ATTRIBUTION.md`). **Every analyzer is reachable as a `kcd analyze`
+subcommand** — and therefore as an MCP tool — so this skill runs the same
+whether kcd is driven from a shell or purely over MCP (Claude Code, Claude
+Web). There is no separate `python3 .../scripts/...` path; the `kcd` CLI is
+the only surface.
 
 ```bash
-kcd analyze sch     <project>   --json    # → analyze_schematic.py
-kcd analyze pcb     <project>   --json    # → analyze_pcb.py
-kcd analyze gerbers <directory> --json    # → analyze_gerbers.py
+# Single-domain analyzers
+kcd analyze sch      <project>   --json   # schematic structure + findings
+kcd analyze pcb      <project>   --json   # PCB layout + DFM (--full for the deep pass)
+kcd analyze gerbers  <directory> --json   # fabrication-output checks
+
+# Cross-domain & specialised analyzers — pass a project, not pre-built JSON;
+# they run the prerequisite sch/pcb analyzers for you
+kcd analyze cross     <project>  --json            # schematic<->PCB cross-checks
+kcd analyze thermal   <project>  --json            # junction temps, thermal vias
+kcd analyze fab-gate  <project>  --json            # ready-for-fab pass/fail gate
+kcd analyze whatif    <project> R5=4.7k --json     # component-value sweep
+kcd analyze lifecycle <project>  --json            # BOM obsolescence + temp audit
+kcd analyze diff      base.json head.json --json   # delta between two runs
 ```
 
 `<project>` accepts a `.kicad_pro` path, a project directory, or the project
-name. The raw analyzer JSON lands at `$KCD_RENDER_CACHE/<name>-analyze-{sch,pcb,gerbers}.json`
-and is registered as an envelope artifact for cheap re-reads. Findings with
+name. Each command wraps its analyzer in the standard kcd JSON envelope: the
+raw analyzer JSON lands at `$KCD_RENDER_CACHE/<name>-analyze-<verb>.json` and
+is registered as an envelope artifact for cheap re-reads. Findings with
 severity `warning`, `error`, or `critical` are mirrored into envelope
-`warnings[]` (tagged `[severity][rule_id]`) so agents that skim the top of
-the response still see the headline issues.
+`warnings[]` (tagged `[severity][rule_id]`) so even a skim of the response
+surfaces the headline issues.
 
 **Standard agentic loop (opening move for any KiCad review):**
 
 ```bash
-kcd project current --json                # what's KiCad working on right now?
-kcd analyze sch <project> --json &        # parallel: schematic structure + findings
-kcd analyze pcb <project> --json &        # parallel: PCB layout + DFM signals
-kcd parity     <project> --json           # schematic ↔ PCB reference-set drift
-wait
+kcd project current --json    # what is KiCad working on right now?
+kcd analyze sch <project> --json
+kcd analyze pcb <project> --json
+kcd parity     <project> --json   # schematic <-> PCB reference-set drift
 ```
 
-Cross-reference the three results to find high-confidence issues — anything
-flagged by both the analyzer AND parity is almost certainly real; analyzer-only
+Cross-reference the results to find high-confidence issues — anything flagged
+by both an analyzer AND `parity` is almost certainly real; analyzer-only
 findings need verification against the primary source (`kcd inspect ref`,
 `kcd inspect pcb`, raw `.kicad_sch`). See `references/schematic-analysis.md`,
 `references/pcb-layout-analysis.md`, and `references/standards-compliance.md`
 for the deep-dive methodology.
-
-**Beyond the three core analyzers**, this skill also ships
-`cross_analysis.py`, `analyze_thermal.py`, `diff_analysis.py`, `what_if.py`,
-and ~25 other scripts that aren't yet wrapped behind `kcd analyze`. From the
-kcd repo root, invoke them directly as `python3 skills/kicad/scripts/<name>.py`
-— the upstream usage in the sections below applies verbatim, just replace
-the `<skill-path>` placeholder with `skills/kicad`.
-
-**When the upstream sections below say `<skill-path>`**, that means
-`skills/kicad` relative to the kcd repo root.
 
 ## Related Skills
 
@@ -103,15 +105,15 @@ Treat this as the minimum bar. Analyzer JSON alone is not the final review.
 For a full design review, explicitly account for each item below in the report:
 
 - `datasheets/` present, synced, or verification gap stated
-- `kcd analyze sch <project> --json` (wraps `analyze_schematic.py`)
-- `python3 skills/kicad/scripts/analyze_pcb.py <pcb> --full` (kcd analyze pcb doesn't yet expose `--full`)
-- `python3 skills/kicad/scripts/cross_analysis.py -s sch.json -p pcb.json` (not yet wrapped)
-- `python3 skills/kicad/scripts/analyze_emc.py` (not yet wrapped)
+- `kcd analyze sch <project> --json`
+- `kcd analyze pcb <project> --full --json`
+- `kcd analyze cross <project> --json`
+- EMC pre-compliance via the `emc` skill when both schematic and PCB exist
 - SPICE simulation when any simulator is installed
-- `python3 skills/kicad/scripts/analyze_thermal.py` when both schematic and PCB JSON exist
-- `kcd analyze gerbers <gerber_dir> --json` when fabrication outputs exist (wraps `analyze_gerbers.py`)
-- lifecycle audit when network access and MPN coverage allow it
-- prior review / prior run delta check
+- `kcd analyze thermal <project> --json` when both schematic and PCB exist
+- `kcd analyze gerbers <gerber_dir> --json` when fabrication outputs exist
+- `kcd analyze lifecycle <project> --json` when network access and MPN coverage allow it
+- prior-review / prior-run delta check (`kcd analyze diff`)
 - raw schematic/PCB spot-verification elevated to full verification for critical parts
 - explicit report sections for blockers, verification basis, false positives, and skipped analyses
 
@@ -144,22 +146,21 @@ For the full methodology — component extraction, notation conventions, net map
 
 For deep validation of extracted circuits against datasheets (verifying values, checking patterns, detecting errors), use the methodology in `references/schematic-analysis.md`.
 
-## Analysis Scripts
+## Analyzers
 
-This skill includes Python scripts that extract comprehensive structured JSON from KiCad files in a single pass. Run these first, then reason about the output.
+kcd's analyzers extract comprehensive structured JSON from KiCad files in a
+single pass. Run the relevant `kcd analyze` command first, then reason about
+the output.
 
-Read analyzer JSON output directly rather than writing ad-hoc extraction scripts. The JSON schema has specific field names (documented below and in `references/output-schema.md`) that are easy to get wrong in custom code. To extract a specific section: `python3 -c "import json; d=json.load(open('file.json')); print(json.dumps(d['key'], indent=2))"`.
+The full analyzer JSON is in the envelope's `data` field (and in the artifact
+file kcd writes to `$KCD_RENDER_CACHE`). Read the field you need directly —
+the schema has specific field names (documented below and in
+`references/output-schema.md`) that are easy to get wrong.
 
-**When the JSON surprises you** — an AttributeError, unexpected shape, field
-returning `None` that "should" have a value — stop and run `--schema` before
-writing a second extraction attempt. It prints the exact field names and
-types for every top-level key:
-
-```bash
-python3 <skill-path>/scripts/analyze_schematic.py --schema
-python3 <skill-path>/scripts/analyze_pcb.py --schema
-python3 <skill-path>/scripts/analyze_gerbers.py --schema
-```
+**When the JSON surprises you** — an unexpected shape, or a field returning
+`None` that "should" have a value — consult `references/output-schema.md`,
+which documents the exact field names and types for every top-level key,
+before assuming a bug.
 
 **JSON field cheat sheet** — the most common mistakes when reading analyzer
 output by hand:
@@ -174,23 +175,18 @@ output by hand:
 | Footprint position | `pcb.footprints[].x / .y` at top level (no `.position` wrapper) | `footprints[].position.x` |
 | Findings | `findings[]` flat list — each has `rule_id`, `detector`, `severity`, `summary`, `report_context`. Filter with `finding_schema.get_findings(data, Det.*)` or `group_findings(data)` | Looking for keyed dicts like `signal_analysis.power_regulators[]` (pre-v1.3 format, removed) |
 
-This prevents format-string bugs and wrong field names. Use f-strings or `json.dumps()` for output formatting — never `%s` with non-string types. See `references/output-schema.md` for the full schema with common extraction patterns.
-
-In all commands below, `<skill-path>` refers to this skill's base directory (shown at the top of this file when loaded).
+See `references/output-schema.md` for the full schema with common extraction
+patterns.
 
 ### Schematic Analyzer
 ```bash
-# kcd-native (recommended): wraps in the standard JSON envelope, lifts findings
-# with severity >= warning into envelope warnings[], saves raw JSON as artifact.
 kcd analyze sch <project> --json
-kcd analyze sch <project> --out custom-path.json --json
-
-# Direct script (when you need --analysis-dir / --compact / --schema / advanced flags):
-python3 skills/kicad/scripts/analyze_schematic.py <file.kicad_sch> --analysis-dir analysis/
-python3 skills/kicad/scripts/analyze_schematic.py <file.kicad_sch> --analysis-dir analysis/ --compact
-python3 skills/kicad/scripts/analyze_schematic.py <file.kicad_sch> --output analysis.json  # one-off, no cache
+kcd analyze sch <project> --out custom-path.json --json   # custom artifact path
 ```
-Outputs structured JSON (~60-220KB depending on board complexity) with:
+Wraps the schematic analyzer in the standard JSON envelope, lifts findings
+with severity >= warning into envelope `warnings[]`, and saves the raw JSON
+as an artifact. Outputs structured JSON (~60-220KB depending on board
+complexity) with:
 - **Components & BOM**: inventory with reference, value, footprint, lib_id, type classification, MPN, datasheet; deduplicated BOM with quantities
 - **Nets**: full connectivity map with pin-to-net mapping, wire counts, no-connects
 - **Detected subcircuits** (pattern-matched circuits — all emitted as `findings[]` entries with matching `Det.*` detectors; use `get_findings(data, Det.POWER_REGULATORS)` etc. to fetch):
@@ -211,7 +207,7 @@ Supports modern `.kicad_sch` (KiCad 6+) and legacy `.sch` (KiCad 4/5). Hierarchi
 
 ### Supplementary Data for Legacy Designs
 
-When `analyze_schematic.py` returns incomplete data (components with missing pins due to unavailable `.lib` files), use additional project files to recover full analysis capability. The most valuable source is the `.net` netlist file, which provides explicit pin-to-net mapping that closes any remaining gaps.
+When `kcd analyze sch` returns incomplete data (components with missing pins due to unavailable `.lib` files), use additional project files to recover full analysis capability. The most valuable source is the `.net` netlist file, which provides explicit pin-to-net mapping that closes any remaining gaps.
 
 For detailed parsing instructions, data recovery workflows, and a priority matrix of supplementary sources (netlist, cache library, PCB cross-reference, PDF exports), read `references/supplementary-data-sources.md`.
 
@@ -232,14 +228,8 @@ See `references/schematic-analysis.md` Step 2 for the full verification checklis
 
 ### PCB Layout Analyzer
 ```bash
-# kcd-native (recommended):
 kcd analyze pcb <project> --json
-kcd analyze pcb <project> --out custom-path.json --json
-
-# Direct script (when you need --proximity / --full / --analysis-dir / --schema):
-python3 skills/kicad/scripts/analyze_pcb.py <file.kicad_pcb> --analysis-dir analysis/
-python3 skills/kicad/scripts/analyze_pcb.py <file.kicad_pcb> --analysis-dir analysis/ --proximity  # add crosstalk analysis
-python3 skills/kicad/scripts/analyze_pcb.py <file.kicad_pcb> --output pcb.json  # one-off, no cache
+kcd analyze pcb <project> --full --json   # deep pass: track/via coords, impedance, return paths
 ```
 Outputs structured JSON (~50-300KB depending on board complexity) with:
 - **Core**: footprint inventory (pads, courtyards, net assignments, extended attrs, schematic cross-reference), track/via statistics, zone summaries, board outline/dimensions, routing completeness
@@ -274,38 +264,22 @@ All PCB analysis sections now produce findings with the rich format (detector, r
 
 ### Cross-Domain Analysis
 
-After running both schematic and PCB analyzers, run the cross-domain analyzer.
-Point `--schematic` and `--pcb` at the current run's JSON files and pass
-`--analysis-dir analysis/` so the result lands inside the same run folder
-and the manifest tracks it:
-
-```
-# Recommended: integrate into the current run
-python3 <skill-path>/scripts/cross_analysis.py \
-    --schematic analysis/<run_id>/schematic.json \
-    --pcb analysis/<run_id>/pcb.json \
-    --analysis-dir analysis/
-
-# One-off (bypasses the cache)
-python3 <skill-path>/scripts/cross_analysis.py \
-    --schematic schematic.json --pcb pcb.json --output cross.json
+```bash
+kcd analyze cross <project> --json
 ```
 
-Checks: CC-001 connector current capacity, EG-001 ESD protection gaps, DA-001 decoupling adequacy, XV-001..003 schematic/PCB sync. PCB JSON optional.
+Runs the schematic and PCB analyzers internally, then cross-checks them.
+Checks: CC-001 connector current capacity, EG-001 ESD protection gaps,
+DA-001 decoupling adequacy, XV-001..003 schematic/PCB sync.
 
 ### Connectivity Graph (--full mode)
 
-When `--full` is used with the PCB analyzer, the output includes a `connectivity_graph` section with per-net copper connectivity analysis via union-find over pads, tracks, vias, and zone fills. This enables deterministic plane split detection and return path validation in cross_analysis.py. Each net entry shows island count, component-to-island mapping, gap locations, and disconnected pad pairs.
+When `--full` is used with `kcd analyze pcb`, the output includes a `connectivity_graph` section with per-net copper connectivity analysis via union-find over pads, tracks, vias, and zone fills. This enables deterministic plane split detection and return path validation in the cross-domain analyzer. Each net entry shows island count, component-to-island mapping, gap locations, and disconnected pad pairs.
 
 ### Gerber & Drill Analyzer
 ```bash
-# kcd-native (recommended):
 kcd analyze gerbers <gerber_directory/> --json
 kcd analyze gerbers <gerber_directory/> --out custom-path.json --json
-
-# Direct script (when you need --analysis-dir / --full / --schema):
-python3 skills/kicad/scripts/analyze_gerbers.py <gerber_directory/> --analysis-dir analysis/
-python3 skills/kicad/scripts/analyze_gerbers.py <gerber_directory/> --output gerber.json
 ```
 Outputs: layer identification (X2 attributes), component/net/pin mapping (KiCad 6+ TO attributes), aperture function classification, trace width distribution, board dimensions, drill classification (via/component/mounting), layer completeness, alignment verification, pad type summary (SMD/THT ratio). Add `--full` for complete pin-to-net connectivity dump. ~10KB JSON.
 
@@ -313,17 +287,12 @@ The gerber analyzer produces a `findings` list with rich format findings: GR-001
 
 If the script fails or returns unexpected results, see `references/manual-gerber-parsing.md` for the complete fallback methodology for parsing raw Gerber/Excellon files directly.
 
-All scripts output JSON to stdout by default. Prefer `--analysis-dir analysis/`
-to integrate output into the run-folder convention described in "Analysis
-Cache Convention" below — every analyzer in a single session then co-locates
-inside the same `analysis/<run_id>/` folder and is tracked by the manifest.
-Use `--output file.json` only for one-off runs where you don't want the
-result cached. Add `--compact` for single-line JSON.
-
-**Analyzer JSON is worth keeping** — these are expensive to regenerate (large
-schematics take time). `--analysis-dir` preserves every run and is the form
-downstream tools (kidoc, diff_analysis, what_if) expect. They're not worth
-committing to git, but don't delete them between analysis steps.
+**Artifacts.** Every `kcd analyze` command saves the raw analyzer JSON to
+`$KCD_RENDER_CACHE/<name>-analyze-<verb>.json` and registers it as an
+envelope artifact, so a re-read is cheap and `kcd analyze diff` can compare
+two runs. Pass `--out <path>` to write the JSON somewhere specific. These
+files are expensive to regenerate (large schematics take time) — keep them
+around during a review session; they're not worth committing to git.
 
 ### Harmonized Output Format
 
@@ -350,72 +319,27 @@ All analyzers produce a uniform output envelope:
 }
 ```
 
-The `findings` list is the single authoritative source for all findings. Use `finding_schema.get_findings()` or `finding_schema.group_findings()` to filter by detector, rule prefix, or category. Detector names are available as constants in `finding_schema.Det`. Severities are `error`, `warning`, or `info`; confidence is `deterministic`, `heuristic`, or `datasheet-backed`.
+The `findings` list is the single authoritative source for all findings.
+Filter `data.findings` by `rule_id` prefix, `detector`, or `severity`
+yourself. Severities are `error`, `warning`, or `info`; confidence is
+`deterministic`, `heuristic`, or `datasheet-backed`. (`kcd analyze` already
+lifts `warning`/`error`/`critical` findings into the envelope `warnings[]`.)
 
-All analyzers support `--text` for human-readable output, `--analysis-dir` for
-integrated run-folder output (preferred), and `--output` for writing to a
-specific file verbatim (one-off). When both are passed, the explicit
-`--output` path wins — pick one form per invocation.
+### Comparing Runs
 
-### Stage and Audience Filtering
-
-All analyzers support `--stage` and `--audience` flags:
-
-**Stages:** `schematic`, `layout`, `pre_fab`, `bring_up`
-**Audiences:** `designer` (default), `reviewer`, `manager`
+To see what changed between two design revisions, save each analyzer run with
+`--out` and diff them:
 
 ```bash
-# Show only layout-relevant findings for a reviewer
-python3 <skill-path>/scripts/analyze_pcb.py board.kicad_pcb --stage layout --audience reviewer --text
-
-# Manager summary of schematic review readiness
-python3 <skill-path>/scripts/analyze_schematic.py design.kicad_sch --audience manager --text
-
-# Pre-fab checklist for cross-domain analysis
-python3 <skill-path>/scripts/cross_analysis.py -s sch.json -p pcb.json --stage pre_fab --text
+kcd analyze sch <project> --out base.json --json
+# ... revise the design ...
+kcd analyze sch <project> --out head.json --json
+kcd analyze diff base.json head.json --json
 ```
 
-JSON output always includes all findings. `--stage` adds `stages` and `in_active_stage` fields to each finding plus a `stage_filter` summary. `audience_summary` is always computed with designer/reviewer/manager views. `--text` output respects both flags.
-
-### Generated Files
-
-Analysis outputs are stored in `analysis/` with timestamped run folders managed by `analysis_cache.py`. The manifest (`analysis/manifest.json`) tracks all runs.
-
-| File Type | Location | Regenerable? | Commit to git? |
-|-----------|----------|-------------|----------------|
-| Analyzer JSON | `analysis/<timestamp>/*.json` | Yes (expensive) | Configured by `track_in_git` in `.kicad-happy.json` (default: no) |
-| Manifest | `analysis/manifest.json` | Yes | Always (tracked by default) |
-| Design review report | User-chosen path | Yes | Optional |
-
-When creating design reviews, check the manifest for prior runs. If `auto_diff` is enabled and prior runs exist, automatically diff current vs previous using `diff_analysis.py` and include the delta in the "Previous Review Delta" section.
-
-See also the `bom` skill's cleanup section for datasheets, order CSVs, and backups.
-
-### Analysis Cache Configuration
-
-The `analysis` section in `.kicad-happy.json` controls the shared analysis output directory:
-
-```json
-{
-  "analysis": {
-    "output_dir": "analysis",
-    "retention": 5,
-    "auto_diff": true,
-    "track_in_git": false,
-    "diff_threshold": "major"
-  }
-}
-```
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `output_dir` | `"analysis"` | Analysis directory path, relative to project root |
-| `retention` | `5` | Max unpinned runs to keep. `0` = unlimited |
-| `auto_diff` | `true` | Auto-include delta section in design reviews |
-| `track_in_git` | `false` | When false, JSONs gitignored but manifest tracked |
-| `diff_threshold` | `"major"` | Severity that triggers new timestamped folder: `minor`, `major`, `breaking` |
-
-All fields are optional. Missing fields use defaults.
+`kcd analyze diff` auto-detects the analyzer type and reports component,
+signal, BOM, connectivity, and finding deltas with a severity classification
+(`none` / `minor` / `major` / `breaking`).
 
 ### Output JSON Schema Quick Reference
 
@@ -459,20 +383,20 @@ directory, generator, layer_count, statistics, completeness, alignment,
 drill_classification, pad_summary, board_dimensions, gerbers, drills
 ```
 
-**Workflow:** When analyzing a KiCad project, scan the project directory for all available file types and run **every applicable analyzer** — not just the one the user mentioned. A complete analysis uses all the data available. Use `--analysis-dir analysis/` on all analyzers to share a single run folder tracked by the manifest. For one-off runs without cache tracking, use `--output file.json` instead.
+**Workflow:** When analyzing a KiCad project, scan the project directory for all available file types and run **every applicable analyzer** — not just the one the user mentioned. A complete analysis uses all the data available.
 
 **Before starting the workflow below for a design review:** read `references/report-generation.md`. The report structure, verification basis rules, skipped-analysis disclosure, and false-positive triage expectations there are part of the review workflow, not optional polish added at the end.
 
 1. **Scan the project directory** for `.kicad_sch`, `.kicad_pcb`, `.kicad_pro`, gerber directories, and `.net`/`.xml` netlist files.
 2. **Sync datasheets** (see Datasheet Acquisition below) — this is a prerequisite for verification, not optional. Without datasheets, all subsequent verification is reduced to internal consistency checks — confirming the design agrees with itself, not that it's correct. Run the sync before reading any analyzer output. If sync fails or no API keys are available, use fallback methods (Datasheet property URLs, individual downloads via `digikey` skill, ask the user). If critical IC datasheets can't be obtained, note this prominently in the report as a verification gap.
-3. **Run the core analyzers.** If the schematic exists, run `analyze_schematic.py`. If the PCB exists, run `analyze_pcb.py --full`. If gerbers exist, run `analyze_gerbers.py`. Run them in parallel when possible.
-4. **Run cross-domain analysis** — when both schematic and PCB analysis exist, run `cross_analysis.py --schematic sch.json --pcb pcb.json`. This catches dangerous cross-domain bugs (connector current vs trace width, ESD gaps, decoupling adequacy, schematic/PCB sync).
-5. **Run EMC pre-compliance** — when both schematic and PCB analysis exist, run `analyze_emc.py --schematic sch.json --pcb pcb.json`. This is **required** during design reviews, not optional. The EMC skill runs 44 rule checks covering ground plane integrity, decoupling, switching harmonics, PDN impedance, diff pair skew, ESD paths, and more. Include results in the EMC section of the report.
+3. **Run the core analyzers.** If the schematic exists, run `kcd analyze sch`. If the PCB exists, run `kcd analyze pcb --full`. If gerbers exist, run `kcd analyze gerbers`.
+4. **Run cross-domain analysis** — when both schematic and PCB exist, run `kcd analyze cross`. This catches dangerous cross-domain bugs (connector current vs trace width, ESD gaps, decoupling adequacy, schematic/PCB sync).
+5. **Run EMC pre-compliance** — when both schematic and PCB exist, hand off to the `emc` skill. This is **required** during design reviews, not optional. The EMC skill runs 44 rule checks covering ground plane integrity, decoupling, switching harmonics, PDN impedance, diff pair skew, ESD paths, and more. Include results in the EMC section of the report.
 6. **Run SPICE simulation** — first run `which ngspice ltspice xyce`. If any simulator is installed, SPICE is **required** before writing the report. Hand off to the `spice` skill with the schematic analysis JSON. This validates filter frequencies, divider ratios, opamp gains, and more against actual simulation results. SPICE takes <1 second on most boards and catches value-computation errors (wrong resistor ratio, wrong cap for cutoff frequency) that no static analyzer finds. If both schematic and PCB analysis exist, use `--parasitics` for high-impedance circuits (>100K feedback dividers, LC filters, RF matching networks). Include results in the Simulation Verification section of the report. **Output schema:** top-level keys are `summary`, `simulation_results`, `workdir`, `total_elapsed_s`, `simulator`. Each entry in `simulation_results[]` has: `subcircuit_type`, `components` (list of refs, e.g. `["R5", "C3"]`), `reference` (joined refs, e.g. `"R5/C3"`), `status` (`pass`/`warn`/`fail`/`skip`), `expected` (dict of metric values), `simulated` (dict of measured values), `delta` (dict of error percentages).
-7. **Run thermal analysis** — when both schematic and PCB analysis exist, run `analyze_thermal.py --schematic schematic.json --pcb pcb.json`. Estimates junction temperatures from package θJA and board thermal via correction. Include results in the Thermal Hotspot section of the report.
-8. **Run lifecycle audit** (when network access and MPNs are available) — invoke via `analyze_schematic.py --lifecycle` flag. Checks component obsolescence status via distributor APIs. Include results in the Component Lifecycle section of the report, or note "Lifecycle audit not performed — [reason: no API keys / no network / no MPNs]."
+7. **Run thermal analysis** — when both schematic and PCB exist, run `kcd analyze thermal`. Estimates junction temperatures from package θJA and board thermal via correction. Include results in the Thermal Hotspot section of the report.
+8. **Run lifecycle audit** (when network access and MPNs are available) — run `kcd analyze lifecycle`. Checks component obsolescence status via distributor APIs. Include results in the Component Lifecycle section of the report, or note "Lifecycle audit not performed — [reason: no API keys / no network / no MPNs]."
 9. **Read the `.kicad_pro`** project file directly (it's JSON) for design rules, net classes, and DRC/ERC settings.
-10. **Check for prior design reviews** — scan the project directory for existing review files (`*review*.md`, `*design-review*.md`). If found, read the most recent one. If `auto_diff` is enabled and prior runs exist, run `diff_analysis.py` on current vs previous run and include the delta in the "Previous Review Delta" section.
+10. **Check for prior design reviews** — scan the project directory for existing review files (`*review*.md`, `*design-review*.md`). If found, read the most recent one. If a prior analyzer JSON is available, run `kcd analyze diff` on current vs previous and include the delta in the "Previous Review Delta" section.
 11. **Verify each output** against the raw files and datasheets before using the data in your report.
 12. **Produce a unified report** covering schematic analysis, PCB layout analysis, cross-domain findings, EMC risk assessment, simulation verification, thermal hotspots, and cross-reference findings. See `references/report-generation.md` for the report template.
 13. **Disclose all review gaps explicitly** — if thermal, lifecycle, gerber, datasheet extraction, or prior-review delta were not performed, add a short "Not performed / limits" section to the report instead of omitting them silently.
@@ -492,16 +416,14 @@ Default to thorough analysis unless the user asks for a quick review. The reason
 
 Datasheets are what separate a consistency check from a correctness check. Without them, you can confirm the design agrees with itself — but not that it matches the real-world parts. Obtain datasheets early in the workflow.
 
-**Automated sync (preferred):** Run datasheet sync scripts early in the workflow. They download datasheets for all components with MPNs into a shared `datasheets/` directory with an `manifest.json` manifest. Run the preferred source first; if some parts fail, try others — they share the same directory and skip already-downloaded files.
+**Automated sync (preferred):** Hand off to a distributor skill early in the
+workflow to download datasheets for all components with MPNs into a shared
+`datasheets/` directory. Try the preferred source first; if some parts fail,
+try others — they share the same directory and skip already-downloaded files.
 
-```bash
-python3 <digikey-skill-path>/scripts/sync_datasheets_digikey.py <file.kicad_sch>
-python3 <lcsc-skill-path>/scripts/sync_datasheets_lcsc.py <file.kicad_sch>
-python3 <element14-skill-path>/scripts/sync_datasheets_element14.py <file.kicad_sch>
-python3 <mouser-skill-path>/scripts/sync_datasheets_mouser.py <file.kicad_sch>
-```
-
-DigiKey is best (direct PDF URLs). element14 is reliable (no bot protection). LCSC works for LCSC-only parts. Mouser is a last resort (often blocks downloads).
+Source priority: **`digikey`** (best — direct PDF URLs), **`element14`**
+(reliable — no bot protection), **`lcsc`** (LCSC-only parts), **`mouser`**
+(last resort — often blocks downloads).
 
 **Check for existing datasheets:** Before downloading, look for:
 - `<project>/datasheets/` with `manifest.json` (from a previous sync)
@@ -515,11 +437,7 @@ DigiKey is best (direct PDF URLs). element14 is reliable (no bot protection). LC
 3. Use web search to find the manufacturer's datasheet page
 4. **Ask the user** — if a critical component's datasheet can't be found automatically, tell the user which parts are missing and ask them to provide the datasheets. Don't silently skip verification because a datasheet wasn't available. Example: "I couldn't find datasheets for U3 (XYZ1234) and U7 (ABC5678). Can you provide them? I need them to verify the pinout and application circuit."
 
-**Structured datasheet extraction (for large designs or repeated reviews):** Pre-extract datasheet specs into cached JSON for faster, more consistent pin verification. This is especially valuable for designs with 10+ ICs where re-reading PDFs from scratch each time is slow.
-
-```bash
-python3 <skill-path>/scripts/datasheet_page_selector.py <pdf_path> --mpn <mpn> --category <category>
-```
+**Structured datasheet extraction (for large designs or repeated reviews):** Pre-extract datasheet specs into cached JSON for faster, more consistent pin verification. This is especially valuable for designs with 10+ ICs where re-reading PDFs from scratch each time is slow. The **`datasheets` skill** owns this pipeline — hand off to it for page selection, extraction, and caching.
 
 After reading the selected pages and producing an extraction JSON, score and cache it using `datasheet_score` and `datasheet_extract_cache` modules. Extractions are stored in `datasheets/extracted/<MPN>.json` and reused across reviews. The **`datasheets` skill** owns the full extraction pipeline (schema, page selection, scoring rubric, consumer API) — see `skills/datasheets/SKILL.md` and its reference guides.
 
@@ -558,17 +476,10 @@ The PCB analyzer's `sch_path`, `sch_sheetname`, and `sch_sheetfile` fields in ea
 Compare two analysis JSON outputs to see what changed between design revisions (e.g., base branch vs PR, v1 vs v2). Use when the user says things like "compare designs", "what changed", "diff my schematic", "show changes from main", or "diff base vs head". Full reference: `references/diff-analysis.md`.
 
 ```bash
-# Compare two schematic analysis outputs (JSON to stdout)
-python3 <skill-path>/scripts/diff_analysis.py base.json head.json
-
-# Human-readable text output
-python3 <skill-path>/scripts/diff_analysis.py base.json head.json --text
-
-# Write to file, custom threshold (ignore <2% deltas)
-python3 <skill-path>/scripts/diff_analysis.py base.json head.json --output diff.json --threshold 2.0
-
-# Ignore small percentage changes (e.g., rounding noise)
-python3 <skill-path>/scripts/diff_analysis.py base.json head.json --threshold 5.0 --text
+# Save each analyzer run with --out, then diff the two JSON files
+kcd analyze sch <project> --out base.json --json
+kcd analyze sch <project> --out head.json --json
+kcd analyze diff base.json head.json --json
 ```
 
 Auto-detects analyzer type (schematic, PCB, EMC, SPICE). Reports:
@@ -580,24 +491,13 @@ Auto-detects analyzer type (schematic, PCB, EMC, SPICE). Reports:
 - **SPICE results**: status transitions (pass->fail regressions, fail->pass fixes), Monte Carlo concern changes
 - **Severity classification**: `none` (no changes), `minor` (statistics only), `major` (component/signal/finding changes), `breaking` (SPICE regressions, new CRITICAL EMC findings, new ERC warnings)
 
-Also used programmatically by `analysis_cache.should_create_new_run()` to decide whether new outputs warrant a new timestamped run folder.
-
 ### Thermal Hotspot Estimation
 
 Estimates junction temperatures of power-dissipating components by combining schematic power data with PCB thermal infrastructure (copper pour, thermal vias, package type). Use when the user says "check thermals", "thermal analysis", "will this overheat", "junction temperature", "power dissipation", or "thermal design".
 
 ```bash
-# Recommended: integrate into the current run
-python3 <skill-path>/scripts/analyze_thermal.py \
-    -s analysis/<run_id>/schematic.json \
-    -p analysis/<run_id>/pcb.json \
-    --analysis-dir analysis/
-
-# Human-readable text report
-python3 <skill-path>/scripts/analyze_thermal.py -s schematic.json -p pcb.json --text
-
-# Custom ambient temperature (default: 25°C), one-off output file
-python3 <skill-path>/scripts/analyze_thermal.py -s schematic.json -p pcb.json --ambient 40 -o thermal.json
+kcd analyze thermal <project> --json
+kcd analyze thermal <project> --ambient 40 --json   # custom ambient (default 25 deg C)
 ```
 
 Models each power component (LDO, switching regulator, shunt resistor) as a point heat source. Computes Tj = T_ambient + P_diss × Rθ_JA_effective, where Rθ_JA comes from a package lookup table (SOT-223: 60°C/W, QFN-5x5: 25°C/W, etc.) and is corrected for PCB thermal vias and copper pour. Rules:
@@ -620,50 +520,20 @@ Instantly see the impact of component value changes on circuit behavior without 
 
 ```bash
 # Single value change
-python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k --text
+kcd analyze whatif <project> R5=4.7k --json
 
 # Sweep: comma list or log range
-python3 <skill-path>/scripts/what_if.py analysis.json R5=1k,2.2k,4.7k,10k --text
-python3 <skill-path>/scripts/what_if.py analysis.json R5=1k..100k:10 --text
+kcd analyze whatif <project> R5=1k,2.2k,4.7k,10k --json
+kcd analyze whatif <project> R5=1k..100k:10 --json
 
-# Tolerance corner analysis (±5% worst-case)
-python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k+-5% C3=100n+-10% --text
+# Tolerance corner analysis (worst-case)
+kcd analyze whatif <project> R5=4.7k+-5% C3=100n+-10% --json
 
-# Find the right value: inverse solver with E-series snapping
-python3 <skill-path>/scripts/what_if.py analysis.json --fix voltage_dividers[0] --target 3.3 --text
-python3 <skill-path>/scripts/what_if.py analysis.json --fix rc_filters[0] --target 1000 --text
-
-# EMC impact preview
-python3 <skill-path>/scripts/what_if.py analysis.json C3=1u --emc --text
-
-# SPICE re-simulation on affected subcircuits
-python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k --spice --text
-
-# Export patched JSON for further analysis (EMC, thermal, diff)
-python3 <skill-path>/scripts/what_if.py analysis.json R5=4.7k --output patched.json
+# Suggest component-value fixes (feedback dividers, RC filters, crystal caps)
+kcd analyze whatif <project> --suggest-fixes --json
 ```
 
-Patches component values in the analyzer JSON, recalculates derived fields (filter cutoff, divider ratio, opamp gain, crystal load, current sense range, regulator Vout), and shows before/after comparison with percentage deltas. Supports single changes, multi-point sweeps (comma or log-range), tolerance corner analysis, inverse fix suggestions with E-series snapping, EMC impact preview, PCB parasitic awareness (auto-discovered or via `--pcb`), and SPICE re-verification.
-
-### Findings Summary
-
-Summarises findings across all analyzers in a run. Use when the user wants a top-N list, a severity-filtered view, or a machine-readable roll-up without reading individual JSON files. Reads the current run from `analysis/manifest.json`.
-
-```bash
-# Top findings from the current run (default: top 20)
-python3 <skill-path>/scripts/summarize_findings.py analysis/
-
-# Limit to top 10 high-severity findings
-python3 <skill-path>/scripts/summarize_findings.py analysis/ --top 10 --severity high
-
-# JSON output for programmatic consumption
-python3 <skill-path>/scripts/summarize_findings.py analysis/ --json
-
-# Summarise a specific run by ID
-python3 <skill-path>/scripts/summarize_findings.py analysis/ --run <run_id>
-```
-
-Flags: `--top N` (default 20), `--severity` (filter to `critical`/`high`/`warning`/`info`), `--run` (explicit run ID instead of latest), `--json` (machine-readable output).
+Patches component values, recalculates derived fields (filter cutoff, divider ratio, opamp gain, crystal load, current sense range, regulator Vout), and shows before/after comparison with percentage deltas. Pass at least one `REF=VALUE` change or `--suggest-fixes`. Supports single changes, multi-point sweeps (comma or log-range), tolerance corner analysis, and inverse fix suggestions with E-series snapping.
 
 ### Component Lifecycle & Temperature Audit
 
@@ -671,20 +541,11 @@ Queries distributor APIs to check component lifecycle status (active, NRND, EOL,
 
 ```bash
 # Basic lifecycle check
-python3 <skill-path>/scripts/lifecycle_audit.py analysis.json
+kcd analyze lifecycle <project> --json
 
 # With temperature range validation (preset or custom)
-python3 <skill-path>/scripts/lifecycle_audit.py analysis.json --temp-range industrial
-python3 <skill-path>/scripts/lifecycle_audit.py analysis.json --temp-range "-40,105"
-
-# Query specific distributors only
-python3 <skill-path>/scripts/lifecycle_audit.py analysis.json --only digikey,lcsc
-
-# Search for replacement parts when EOL/NRND found
-python3 <skill-path>/scripts/lifecycle_audit.py analysis.json --suggest-alternatives
-
-# Save results
-python3 <skill-path>/scripts/lifecycle_audit.py analysis.json --output lifecycle.json
+kcd analyze lifecycle <project> --temp-range industrial --json
+kcd analyze lifecycle <project> --temp-range "-40,105" --json
 ```
 
 Reads the analyzer JSON BOM section, extracts unique MPNs, queries distributors (LCSC no-auth, DigiKey, element14, Mouser) for lifecycle status and operating temperature. Temperature presets: `commercial` (0/70°C), `industrial` (-40/85°C), `extended` (-40/105°C), `automotive` (-40/125°C), `military` (-55/125°C). Also checks datasheet extraction cache for temperature data before making API calls.
@@ -731,12 +592,12 @@ Detailed methodology and format documentation lives in reference files. Read the
 | `report-generation.md` | 614 | Report template (critical findings at top), analyzer output field reference (schematic/PCB/gerber), severity definitions, writing principles, domain-specific focus areas, known analyzer limitations |
 | `standards-compliance.md` | 638 | IPC/IEC standards tables: conductor spacing (IPC-2221A Table 6-1), current capacity (IPC-2221A/IPC-2152), annular rings, hole sizes, impedance, via protection (IPC-4761), creepage/clearance (ECMA-287/IEC 60664-1). Consider for all boards; auto-trigger for professional/industrial designs, high voltage, mains input, or safety isolation. |
 | `design-intent.md` | — | Design intent resolution, target market / certification / power constraints that gate findings by context |
-| `diff-analysis.md` | — | How `diff_analysis.py` compares two analyzer runs and emits severity-ranked change reports |
-| `what-if.md` | — | How `what_if.py` patches component values, recalculates derived fields, and suggests fixes for feedback dividers / crystal load caps / cap derating |
-| `config-reference.md` | — | `.kicad-happy.json` schema — project config for analysis cache, suppressions, design intent, risk scoring |
+| `diff-analysis.md` | — | How `kcd analyze diff` compares two analyzer runs and emits severity-ranked change reports |
+| `what-if.md` | — | How `kcd analyze whatif` patches component values, recalculates derived fields, and suggests fixes for feedback dividers / crystal load caps / cap derating |
+| `config-reference.md` | — | `.kicad-happy.json` schema — project config for suppressions, design intent, risk scoring |
 | `datasheet-verification.md` | — | Automated cross-check of schematic connections against structured datasheet extractions (pin voltage, required externals, decoupling adequacy) |
 
-For script internals, data structures, signal analysis patterns, and batch test suite documentation, see `scripts/README.md`.
+For the analyzer engine's internals (data structures, signal-analysis patterns, detector libraries), see `src/kcd/analyzers/README.md` in the kcd repo.
 
 ## File Types Quick Reference
 
@@ -767,7 +628,7 @@ For a thorough datasheet-driven schematic review — identifying subcircuits, fe
 
 For advanced layout analysis beyond what the PCB analyzer script provides — impedance calculations from stackup parameters, DRC rule authoring, power electronics design review techniques, differential pair validation, return path analysis, copper balance assessment, board edge clearance rules, and manual script-writing patterns — read `references/pcb-layout-analysis.md`.
 
-Most routine PCB analysis (via types, annular ring, placement, connectivity, thermal vias, current capacity, signal integrity, DFM scoring, tombstoning risk, thermal pad vias) is handled automatically by `analyze_pcb.py`. Use the reference for deeper manual investigation.
+Most routine PCB analysis (via types, annular ring, placement, connectivity, thermal vias, current capacity, signal integrity, DFM scoring, tombstoning risk, thermal pad vias) is handled automatically by `kcd analyze pcb`. Use the reference for deeper manual investigation.
 
 ### Design Intent
 
@@ -775,13 +636,12 @@ For interpreting auto-detected design intent and calibrating review severity by 
 
 ### Probing Analyzer JSON
 
-During a review you will often run one-off `python3 -c "import json; ..."` probes to inspect analyzer output (pin-nets, rail voltages, specific finding contents, etc.). Two practices that materially improve the user's ability to follow along:
+During a review you will often inspect specific corners of the analyzer output (pin-nets, rail voltages, specific finding contents, etc.) — by reading the envelope `data` field or the saved artifact JSON, and cross-checking with `kcd inspect ref` / `kcd inspect pcb` / the raw `.kicad_sch`. One practice materially improves the user's ability to follow along:
 
-**Announce what you're checking before each probe.** One concise sentence before the script — not after, not in a comment inside the script. The user should be able to read only the narrative and understand the review flow without opening every tool call.
+**Announce what you're checking before each probe.** One concise sentence before you look — the user should be able to read only the narrative and understand the review flow without opening every tool call.
 
-- Bad: `[Bash] python3 -c "import json; d = json.load(open('analysis/.../schematic.json')); print([...])"` with no surrounding prose.
-- Good: "Checking whether U3's EN pin is tied to +BATT directly or through a divider." then the probe.
-- Good: "Verifying the detected TPS61023 topology matches the datasheet (buck-boost expected)." then the probe.
+- Good: "Checking whether U3's EN pin is tied to +BATT directly or through a divider." then the lookup.
+- Good: "Verifying the detected TPS61023 topology matches the datasheet (buck-boost expected)." then the lookup.
 
 The narrative matters most for probes that investigate *why* something looks wrong — those are the moments a user loses context fastest.
 

@@ -165,10 +165,16 @@ kcd erc    <proj> [--json]
 kcd parity <proj> [--json]                       # schematic ↔ PCB ref drift
 kcd sync   <proj> [--check] [--json]             # export netlist; --check diffs vs live PCB
 
-# Analyze (knowledge-layer; vendored kicad-happy, read-only)
+# Analyze (knowledge-layer; vendored kicad-happy engine at src/kcd/analyzers/, read-only)
 kcd analyze sch     <proj>        [--out <file>] [--json]
-kcd analyze pcb     <proj>        [--out <file>] [--json]
+kcd analyze pcb     <proj>        [--full] [--out <file>] [--json]
 kcd analyze gerbers <gerber-dir>  [--out <file>] [--json]
+kcd analyze cross   <proj>        [--json]   # schematic<->PCB cross-checks
+kcd analyze thermal <proj>        [--ambient <C>] [--json]
+kcd analyze fab-gate <proj>       [--strict] [--json]
+kcd analyze whatif  <proj> [R5=4.7k ...] [--suggest-fixes] [--json]
+kcd analyze lifecycle <proj>      [--temp-range <preset|min,max>] [--json]
+kcd analyze diff    <base.json> <head.json> [--json]
 
 # Route
 kcd route track <proj> --net VCC --from 100,50 --to 110,50 --layer F.Cu --width 0.25

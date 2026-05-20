@@ -39,7 +39,7 @@ The tool operates on pre-analyzed JSON produced by `analyze_schematic.py`, `anal
 ## CLI Reference
 
 ```
-python3 diff_analysis.py <base> <head> [options]
+kcd analyze diff <base> <head> [options]
 ```
 
 ### Positional Arguments
