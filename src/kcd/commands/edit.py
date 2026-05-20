@@ -701,6 +701,9 @@ def designrules(
     value: str = typer.Option(
         ..., "--value", help="New value — mm for distances, true/false for flags"
     ),
+    force: bool = typer.Option(
+        False, "--force", help="Write even if KiCad has the project open"
+    ),
     no_snapshot: bool = typer.Option(False, "--no-snapshot"),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -710,18 +713,30 @@ def designrules(
     enforces (clearance, track width, via/hole sizes, ...). Run with an
     unknown --rule to see the valid keys.
 
-    Note: if KiCad has this project open it caches project settings in memory
-    and will overwrite this edit on its next save. Close the project in KiCad
-    (or reopen it) for the change to stick.
+    Refuses with `project_open_in_kicad` when KiCad has this project loaded:
+    KiCad caches project settings in memory and rewrites .kicad_pro on its
+    next save, so the edit would silently not take effect. Close the project
+    in KiCad, or pass --force to write anyway.
     """
     with run_command("edit.designrules", json_) as r:
-        proj, r.snapshot_before = _pre_edit(
+        from kcd.adapters import kipy_pcb
+        proj = resolve(project)
+        if kipy_pcb.project_is_open(proj.root):
+            if not force:
+                raise CommandError(
+                    "project_open_in_kicad",
+                    "KiCad has this project open; it caches project settings "
+                    "in memory and rewrites .kicad_pro on its next save, so "
+                    "this change would silently not take effect. Close the "
+                    "project in KiCad, or pass --force to write anyway.",
+                )
+            r.warn(
+                "Wrote with --force while KiCad has the project open — KiCad "
+                "will overwrite this change on its next save unless it "
+                "reloads the .kicad_pro file first."
+            )
+        _proj, r.snapshot_before = _pre_edit(
             project, f"designrule {rule}={value}", no_snapshot
-        )
-        r.warn(
-            "If KiCad has this project open it caches project settings and "
-            "may overwrite this change on its next save — close or reopen the "
-            "project in KiCad."
         )
         r.data = {"updated": kicad_pro.set_design_rule(proj.pro, rule, value)}
 

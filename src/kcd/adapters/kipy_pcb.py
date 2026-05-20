@@ -182,6 +182,39 @@ def assert_board_is(expected_pcb: _Path) -> None:
         )
 
 
+def project_is_open(project_root: _Path) -> bool:
+    """Report whether KiCad currently has the given project loaded.
+
+    File-level edits like `edit designrules` write `.kicad_pro` directly.
+    KiCad caches project settings in memory and rewrites that file on its
+    next save, so a write while the project is open silently has no effect.
+    Detecting that lets such a command refuse rather than return a
+    misleading success.
+
+    Returns False when KiCad isn't reachable at all — the project is then
+    plainly not open, and "can't tell" defaults to "safe to write".
+    """
+    try:
+        docs = list_open_documents()
+    except IpcUnavailable:
+        return False
+    target = project_root.resolve()
+    for d in docs:
+        # board/schematic docs carry `project_dir`; a project doc's own
+        # `path` is the project directory.
+        raw = d.get("project_dir") or (
+            d.get("path") if d.get("kind") == "project" else ""
+        )
+        if not raw:
+            continue
+        try:
+            if _Path(raw).resolve() == target:
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def list_footprints() -> list[dict[str, Any]]:
     """Return a serializable list of all footprints on the open board."""
     board = get_board()

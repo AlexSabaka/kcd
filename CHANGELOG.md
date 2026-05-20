@@ -41,8 +41,11 @@ Initial alpha release.
   constraint minimums — clearance, track width, via/hole sizes). Validates the
   rule name against the KiCad 10 constraint set and coerces the value to the
   rule's type (mm float, int, or flag); creates the nested settings path when
-  a freshly-templated project lacks it. Offline JSON edit — warns that KiCad,
-  if it has the project open, may overwrite the change on its next save
+  a freshly-templated project lacks it. Offline JSON edit — refuses with
+  `project_open_in_kicad` when KiCad has the project loaded (its cached
+  settings would silently overwrite the file on the next save); `--force`
+  writes anyway. Round-2 field report bug #3 hardened the original
+  warn-only behaviour into a hard guard
 - `kcd edit move-fp` — PCB footprint move via kipy IPC
 - `kcd edit track delete|modify` — PCB copper track editing via kipy IPC:
   delete tracks, or change their width / layer / net assignment. Tracks

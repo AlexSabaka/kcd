@@ -28,6 +28,14 @@ def proj_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.fixture(autouse=True)
+def _kicad_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default: KiCad has nothing open, so the open-project guard never
+    attempts a real IPC connection. The guard tests override this."""
+    from kcd.adapters import kipy_pcb
+    monkeypatch.setattr(kipy_pcb, "project_is_open", lambda _root: False)
+
+
 def _pro(proj_dir: Path) -> dict:
     return json.loads((proj_dir / "net_fixture.kicad_pro").read_text())
 
@@ -50,8 +58,47 @@ def test_designrules_envelope_and_nested_path(proj_dir: Path) -> None:
     assert out["data"]["updated"]["rule"] == "min_track_width"
     assert out["data"]["updated"]["before"] is None
     assert out["data"]["updated"]["after"] == 0.2
-    assert any("KiCad" in w for w in out["warnings"])
+    # KiCad isn't open (default fixture) — clean write, no clobber warning.
+    assert out["warnings"] == []
 
+    rules = _pro(proj_dir)["board"]["design_settings"]["rules"]
+    assert rules["min_track_width"] == 0.2
+
+
+def test_designrules_refuses_when_project_open(
+    proj_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KiCad has the project open → hard-fail `project_open_in_kicad`, and
+    the .kicad_pro file is left untouched (the edit wouldn't have stuck)."""
+    from kcd.adapters import kipy_pcb
+    monkeypatch.setattr(kipy_pcb, "project_is_open", lambda _root: True)
+    before = (proj_dir / "net_fixture.kicad_pro").read_text()
+    r = CliRunner().invoke(
+        edit_app,
+        ["designrules", str(proj_dir), "--rule", "min_track_width",
+         "--value", "0.2", "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "project_open_in_kicad"
+    assert (proj_dir / "net_fixture.kicad_pro").read_text() == before
+
+
+def test_designrules_force_overrides_open_project(
+    proj_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--force writes despite the project being open, and warns about it."""
+    from kcd.adapters import kipy_pcb
+    monkeypatch.setattr(kipy_pcb, "project_is_open", lambda _root: True)
+    r = CliRunner().invoke(
+        edit_app,
+        ["designrules", str(proj_dir), "--rule", "min_track_width",
+         "--value", "0.2", "--force", "--no-snapshot", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    out = json.loads(r.stdout)
+    assert out["ok"] is True
+    assert out["data"]["updated"]["after"] == 0.2
+    assert any("force" in w.lower() for w in out["warnings"])
     rules = _pro(proj_dir)["board"]["design_settings"]["rules"]
     assert rules["min_track_width"] == 0.2
 
