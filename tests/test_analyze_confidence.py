@@ -1,10 +1,14 @@
-"""Tests for analyzer false-confidence guards (Round-3 field report B5/B6/B7).
+"""Tests for analyzer false-confidence guards.
 
-The vendored analyzers report confident verdicts from partial or empty
-evaluation. kcd's command layer post-processes the analyzer JSON to catch:
-  B5 — fab-gate routing PASS while DRC finds unconnected pads
-  B6 — thermal_score 100 from zero assessed components
-  B7 — MPN coverage blind to the SnapEDA `MP` field
+Round-3 B5/B6/B7 and Round-5 R5-3/R5-5/R5-6 — the vendored analyzers report
+confident verdicts from partial or empty evaluation, or crash on inputs they
+don't handle. kcd's command layer post-processes / guards the analyzer JSON:
+  B5   — fab-gate routing PASS while DRC finds unconnected pads
+  B6   — thermal_score 100 from zero assessed components
+  B7   — MPN coverage blind to the SnapEDA `MP` field
+  R5-3 — analyze_pcb connectivity routing_complete vs DRC
+  R5-5 — analyze diff crashes on gerber (and other unsupported) JSONs
+  R5-6 — analyze_cross 0 findings reads as a clean bill of health
 """
 
 from __future__ import annotations
@@ -18,12 +22,24 @@ import typer
 from typer.testing import CliRunner
 
 from kcd.adapters import analyzers, kicad_cli
-from kcd.commands.analyze import analyze_fab_gate_cmd, analyze_thermal_cmd
+from kcd.commands.analyze import (
+    analyze_cross_cmd,
+    analyze_diff_cmd,
+    analyze_fab_gate_cmd,
+    analyze_pcb_cmd,
+    analyze_thermal_cmd,
+)
 
 _fab_gate_app = typer.Typer()
 _fab_gate_app.command()(analyze_fab_gate_cmd)
 _thermal_app = typer.Typer()
 _thermal_app.command()(analyze_thermal_cmd)
+_pcb_app = typer.Typer()
+_pcb_app.command()(analyze_pcb_cmd)
+_cross_app = typer.Typer()
+_cross_app.command()(analyze_cross_cmd)
+_diff_app = typer.Typer()
+_diff_app.command()(analyze_diff_cmd)
 
 
 @pytest.fixture
@@ -174,3 +190,141 @@ def test_mpn_keys_recognize_mp_and_mfr_part_no() -> None:
     assert "mp" in mod._MPN_KEYS
     assert "mfr_part_no" in mod._MPN_KEYS
     assert "mpn" in mod._MPN_KEYS  # original aliases preserved
+
+
+# ---------------------------------------------------------------------------
+# R5-3 — analyze_pcb connectivity reconciled against DRC
+# ---------------------------------------------------------------------------
+
+def test_pcb_connectivity_downgraded_when_drc_finds_unconnected(
+    monkeypatch, proj_dir: Path,
+) -> None:
+    _stub_analyzer(monkeypatch, {
+        "findings": [],
+        "connectivity": {"routing_complete": True, "unrouted_count": 0},
+    })
+    monkeypatch.setattr(
+        kicad_cli, "run_drc",
+        lambda *a, **k: {"unconnected_items": [{"i": 1}, {"i": 2}]},
+    )
+    out = _invoke(_pcb_app, proj_dir)
+    conn = out["data"]["connectivity"]
+    assert conn["routing_complete"] is False
+    assert conn["drc_unconnected"] == 2
+    assert any("connectivity downgraded" in w for w in out["warnings"])
+
+
+def test_pcb_connectivity_kept_when_drc_clean(
+    monkeypatch, proj_dir: Path,
+) -> None:
+    _stub_analyzer(monkeypatch, {
+        "findings": [],
+        "connectivity": {"routing_complete": True, "unrouted_count": 0},
+    })
+    monkeypatch.setattr(
+        kicad_cli, "run_drc", lambda *a, **k: {"unconnected_items": []}
+    )
+    out = _invoke(_pcb_app, proj_dir)
+    assert out["data"]["connectivity"]["routing_complete"] is True
+
+
+def test_pcb_connectivity_skips_drc_when_already_incomplete(
+    monkeypatch, proj_dir: Path,
+) -> None:
+    """No DRC run when routing is already reported incomplete — the
+    reconciliation only ever downgrades a falsely-passing verdict."""
+    _stub_analyzer(monkeypatch, {
+        "findings": [],
+        "connectivity": {"routing_complete": False, "unrouted_count": 5},
+    })
+
+    def boom(*a, **k):
+        raise AssertionError("DRC must not run when routing is incomplete")
+
+    monkeypatch.setattr(kicad_cli, "run_drc", boom)
+    out = _invoke(_pcb_app, proj_dir)
+    assert out["data"]["connectivity"]["routing_complete"] is False
+
+
+# ---------------------------------------------------------------------------
+# R5-6 — analyze_cross flags an unevaluated (0-finding) report
+# ---------------------------------------------------------------------------
+
+def test_cross_flagged_insufficient_when_no_findings(
+    monkeypatch, proj_dir: Path,
+) -> None:
+    _stub_analyzer(monkeypatch, {"findings": []})
+    _stub_argv(monkeypatch, {
+        "analyzer_type": "cross_analysis",
+        "summary": {"total_findings": 0, "by_severity": {}},
+        "findings": [],
+        "trust_summary": {"trust_level": "high", "provenance_coverage_pct": None},
+    })
+    out = _invoke(_cross_app, proj_dir)
+    summary = out["data"]["summary"]
+    assert summary["assessment_status"] == "insufficient_data"
+    assert any("insufficient_data" in w for w in out["warnings"])
+
+
+def test_cross_not_flagged_when_findings_present(
+    monkeypatch, proj_dir: Path,
+) -> None:
+    _stub_analyzer(monkeypatch, {"findings": []})
+    _stub_argv(monkeypatch, {
+        "analyzer_type": "cross_analysis",
+        "summary": {"total_findings": 1, "by_severity": {"warning": 1}},
+        "findings": [{"severity": "warning", "rule_id": "X", "detail": "y"}],
+        "trust_summary": {"trust_level": "medium"},
+    })
+    out = _invoke(_cross_app, proj_dir)
+    assert "assessment_status" not in out["data"]["summary"]
+
+
+# ---------------------------------------------------------------------------
+# R5-5 — analyze diff guards unsupported analyzer types instead of crashing
+# ---------------------------------------------------------------------------
+
+def _write_json(p: Path, obj: dict) -> Path:
+    p.write_text(json.dumps(obj))
+    return p
+
+
+def test_diff_rejects_gerber_json(tmp_path: Path) -> None:
+    """A gerber JSON used to KeyError inside the vendored differ — it now
+    returns a clean `unsupported_diff` error."""
+    base = _write_json(tmp_path / "base.json", {"analyzer_type": "gerber"})
+    head = _write_json(tmp_path / "head.json", {"analyzer_type": "gerber"})
+    r = CliRunner().invoke(_diff_app, [str(base), str(head), "--json"])
+    assert r.exit_code == 1
+    out = json.loads(r.stdout)
+    assert out["ok"] is False
+    assert out["error"]["code"] == "unsupported_diff"
+    assert "gerber" in out["error"]["message"]
+
+
+def test_diff_rejects_mismatched_types(tmp_path: Path) -> None:
+    base = _write_json(tmp_path / "base.json", {"analyzer_type": "pcb"})
+    head = _write_json(tmp_path / "head.json", {"analyzer_type": "schematic"})
+    r = CliRunner().invoke(_diff_app, [str(base), str(head), "--json"])
+    assert r.exit_code == 1
+    out = json.loads(r.stdout)
+    assert out["error"]["code"] == "unsupported_diff"
+    assert "same analyzer type" in out["error"]["message"]
+
+
+def test_diff_supported_types_pass_the_guard(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    """Two pcb JSONs clear the guard; the differ is stubbed so this stays a
+    unit test."""
+    base = _write_json(tmp_path / "base.json", {"analyzer_type": "pcb"})
+    head = _write_json(tmp_path / "head.json", {"analyzer_type": "pcb"})
+    monkeypatch.setattr(
+        analyzers, "run_analyzer_argv",
+        lambda *a, **k: {"analyzer_type": "pcb", "findings": []},
+    )
+    r = CliRunner().invoke(
+        _diff_app,
+        [str(base), str(head), "--out", str(tmp_path / "d.json"), "--json"],
+    )
+    assert r.exit_code == 0, r.stdout

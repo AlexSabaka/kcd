@@ -223,6 +223,19 @@ def _recount_gate(data: dict) -> None:
         data["overall_status"] = "INCOMPLETE"
 
 
+def _drc_unconnected_count(proj: Project, r: Result, label: str) -> int | None:
+    """Run DRC and return its unconnected-pad count, or None if DRC failed."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="kcd-drc-") as td:
+            raw = kicad_cli.run_drc(
+                cfg_mod.load().kicad_cli, proj.pcb, Path(td) / "drc.json"
+            )
+    except Exception as e:
+        r.warn(f"{label} could not cross-check routing against DRC: {e}")
+        return None
+    return len(raw.get("unconnected_items", []) or [])
+
+
 def _reconcile_routing(data: dict, proj: Project, r: Result) -> None:
     """Cross-check fab-gate's routing verdict against DRC unconnected pads.
 
@@ -240,16 +253,8 @@ def _reconcile_routing(data: dict, proj: Project, r: Result) -> None:
     )
     if routing is None or routing.get("status") != "pass":
         return
-    try:
-        with tempfile.TemporaryDirectory(prefix="kcd-fabgate-drc-") as td:
-            raw = kicad_cli.run_drc(
-                cfg_mod.load().kicad_cli, proj.pcb, Path(td) / "drc.json"
-            )
-    except Exception as e:
-        r.warn(f"fab-gate could not cross-check routing against DRC: {e}")
-        return
-    unconnected = len(raw.get("unconnected_items", []) or [])
-    if unconnected == 0:
+    unconnected = _drc_unconnected_count(proj, r, "fab-gate")
+    if not unconnected:
         return
     routing["status"] = "fail"
     routing["message"] = (
@@ -263,6 +268,28 @@ def _reconcile_routing(data: dict, proj: Project, r: Result) -> None:
     r.warn(
         f"fab-gate routing check downgraded to FAIL — DRC reports "
         f"{unconnected} unconnected pad(s) the gate's net-level check missed."
+    )
+
+
+def _reconcile_connectivity(data: dict, proj: Project, r: Result) -> None:
+    """Cross-check analyze_pcb's connectivity block against DRC unconnected pads.
+
+    `connectivity.routing_complete` is computed from net-level routing only —
+    it can report True while DRC finds pad-level gaps. Mirror the fab-gate
+    reconciliation on analyze_pcb's own verdict (Round-5 field report R5-3).
+    """
+    conn = data.get("connectivity")
+    if not isinstance(conn, dict) or conn.get("routing_complete") is not True:
+        return
+    unconnected = _drc_unconnected_count(proj, r, "analyze pcb")
+    if not unconnected:
+        return
+    conn["routing_complete"] = False
+    conn["drc_unconnected"] = unconnected
+    r.warn(
+        f"analyze pcb connectivity downgraded — DRC reports {unconnected} "
+        "unconnected pad(s) the net-level routing check missed; "
+        "routing_complete is now false."
     )
 
 
@@ -283,6 +310,26 @@ def _flag_empty_thermal(data: dict, r: Result) -> None:
             "thermal_score set to insufficient_data — 0 components were "
             "assessed (no load currents / MPNs to classify power parts); "
             "the design is unevaluated, not verified."
+        )
+
+
+def _flag_insufficient_cross(data: dict, r: Result) -> None:
+    """Flag a cross-domain report that surfaced nothing as unevaluated.
+
+    `cross_analysis` cross-checks (connector current vs trace, ESD gaps,
+    decoupling) need load-current / datasheet inputs. Without them it runs
+    no checks and returns 0 findings — which reads as a clean bill of health.
+    Mark a zero-finding cross report `insufficient_data` (Round-5 R5-6).
+    """
+    summary = data.get("summary")
+    if not isinstance(summary, dict):
+        return
+    if summary.get("total_findings", 0) == 0:
+        summary["assessment_status"] = "insufficient_data"
+        r.warn(
+            "analyze cross assessment_status set to insufficient_data — 0 "
+            "findings, but the cross-checks need load-current / datasheet "
+            "inputs to run; this is unevaluated, not a clean bill of health."
         )
 
 
@@ -378,6 +425,7 @@ def analyze_pcb_cmd(
             "analyze_pcb.py", proj.pcb, extra_args=["--full"] if full else None
         )
         _lift_findings(data, r)
+        _reconcile_connectivity(data, proj, r)
         _save_artifact(
             data, Path(out) if out else None,
             f"{proj.name}-analyze-pcb.json",
@@ -434,6 +482,7 @@ def analyze_cross_cmd(
                 "cross_analysis.py", ["-s", str(sch), "-p", str(pcb)]
             )
         _lift_findings(data, r)
+        _flag_insufficient_cross(data, r)
         _save_artifact(
             data, Path(out) if out else None,
             f"{proj.name}-analyze-cross.json", "analyze_cross_json", r,
@@ -572,6 +621,22 @@ def analyze_lifecycle_cmd(
         r.data = _compact(data)
 
 
+# Analyzer types the vendored `diff_analysis.py` can diff (its `diff_funcs`
+# dict). A JSON of any other type (gerber, cross_analysis, ...) crashes the
+# vendored differ with a KeyError — guard before invoking it.
+_DIFF_SUPPORTED = {"schematic", "pcb", "emc", "spice"}
+
+
+def _diff_analyzer_type(p: Path, label: str) -> str | None:
+    """Read the `analyzer_type` field from an analyzer JSON file."""
+    try:
+        return json.loads(p.read_text()).get("analyzer_type")
+    except (OSError, ValueError) as e:
+        raise CommandError(
+            "bad_json", f"{label} is not readable analyzer JSON: {p} — {e}"
+        ) from e
+
+
 @analyze_app.command("diff")
 def analyze_diff_cmd(
     base: str = typer.Argument(..., help="Base (old) analyzer JSON file."),
@@ -590,6 +655,22 @@ def analyze_diff_cmd(
         for label, p in (("base", base_p), ("head", head_p)):
             if not p.is_file():
                 raise CommandError("not_found", f"{label} JSON not found: {p}")
+        base_type = _diff_analyzer_type(base_p, "base")
+        head_type = _diff_analyzer_type(head_p, "head")
+        for label, t in (("base", base_type), ("head", head_type)):
+            if t is not None and t not in _DIFF_SUPPORTED:
+                raise CommandError(
+                    "unsupported_diff",
+                    f"analyze diff does not support {t!r} analyzer JSONs "
+                    f"({label}); supported: "
+                    f"{', '.join(sorted(_DIFF_SUPPORTED))}.",
+                )
+        if base_type and head_type and base_type != head_type:
+            raise CommandError(
+                "unsupported_diff",
+                "analyze diff needs two JSONs of the same analyzer type — "
+                f"got base={base_type!r}, head={head_type!r}.",
+            )
         data = analyzers.run_analyzer_argv(
             "diff_analysis.py", [str(base_p), str(head_p)]
         )

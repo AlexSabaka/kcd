@@ -243,6 +243,25 @@ Initial alpha release.
   retuned (40 KB total, 8 KB per section) so bulk sections actually spill,
   and a spilled list now keeps a 3-entry `sample` (when it fits 2 KB) so the
   inline envelope still shows representative rows. Round-5 field report B2.
+- `kcd analyze pcb` reconciles its `connectivity` block against DRC. The
+  Round-3 B5 fix downgraded a falsely-passing routing verdict on `fab-gate`
+  but not on `analyze pcb` itself, which kept reporting
+  `connectivity.routing_complete: true` while DRC found unconnected pads.
+  `analyze pcb` now runs the same DRC cross-check and sets
+  `routing_complete: false` + `drc_unconnected: N` when pad-level gaps
+  exist. Round-5 field report R5-3.
+- `kcd analyze cross` no longer reads a zero-finding run as a clean bill of
+  health. Its cross-checks (connector current vs trace, ESD, decoupling)
+  need load-current / datasheet inputs; without them it runs nothing and
+  returns 0 findings. A zero-finding cross report now carries
+  `summary.assessment_status: insufficient_data` with a warning. Round-5
+  field report R5-6.
+- `kcd analyze diff` no longer crashes on gerber (or other unsupported)
+  analyzer JSONs. The vendored differ KeyErrored when handed a JSON whose
+  `analyzer_type` was outside schematic/pcb/emc/spice. `analyze diff` now
+  reads the `analyzer_type` of both inputs and returns a clean
+  `unsupported_diff` error — also catching a base/head type mismatch.
+  Round-5 field report R5-5.
 
 ### Known limitations
 - Diff-pair length tuning: not implemented
