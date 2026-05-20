@@ -604,6 +604,93 @@ def rename_net(
 
 
 # ---------------------------------------------------------------------------
+# Title block + free graphic text (schematic, offline)
+# ---------------------------------------------------------------------------
+
+text_app = typer.Typer(
+    help="Edit title-block fields and free graphic text on the schematic."
+)
+
+_TITLEBLOCK_FIELDS = {"title", "company", "rev", "date"}
+
+
+def _parse_titleblock_field(field: str) -> tuple[str, int | None]:
+    """Validate a `--field` value → (field, comment_number).
+
+    Accepts `title` / `company` / `rev` / `date` and `comment1`..`comment9`.
+    """
+    low = field.strip().lower()
+    if low in _TITLEBLOCK_FIELDS:
+        return low, None
+    if low.startswith("comment") and low[7:].isdigit():
+        n = int(low[7:])
+        if 1 <= n <= 9:
+            return "comment", n
+    raise CommandError(
+        "bad_field",
+        f"Unknown title-block field {field!r}. Use one of "
+        "title, company, rev, date, comment1..comment9.",
+    )
+
+
+@text_app.command("titleblock")
+def text_titleblock(
+    project: str = typer.Argument(...),
+    field: str = typer.Option(
+        ..., "--field", help="title|company|rev|date|comment1..comment9"
+    ),
+    value: str = typer.Option(..., "--value", help="New field text"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Set a title-block field on the root schematic sheet.
+
+    The title block is created if the sheet has none. Root sheet only —
+    sub-sheets carry their own title blocks.
+    """
+    with run_command("edit.text.titleblock", json_) as r:
+        fld, comment_no = _parse_titleblock_field(field)
+        proj, r.snapshot_before = _pre_edit(
+            project, f"titleblock {field}={value}", no_snapshot
+        )
+        mtimes = skip_sch.snapshot_sheet_mtimes(proj)
+        r.data = {"updated": skip_sch.set_titleblock_field(
+            proj.sch, fld, value, comment_no
+        )}
+        _post_edit_sch(proj, r, mtimes, no_render=no_render)
+
+
+@text_app.command("set")
+def text_set(
+    project: str = typer.Argument(...),
+    match: str = typer.Option(..., "--match", help="Current text of the item to change"),
+    to: str = typer.Option(..., "--to", help="New text"),
+    at: str = typer.Option(None, "--at", help="Position 'X,Y' to disambiguate"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Replace a free graphic text item on the root schematic sheet.
+
+    Matches a `(text ...)` annotation by its current string; use --at when
+    several items share the text. Net labels are not affected — use
+    `edit netlabel` / `edit net` for those.
+    """
+    with run_command("edit.text.set", json_) as r:
+        pos = _parse_xy(at) if at else None
+        proj, r.snapshot_before = _pre_edit(
+            project, f"set text {match} -> {to}", no_snapshot
+        )
+        mtimes = skip_sch.snapshot_sheet_mtimes(proj)
+        r.data = skip_sch.set_text(proj.sch, match, to, pos)
+        _post_edit_sch(proj, r, mtimes, no_render=no_render)
+
+
+edit_app.add_typer(text_app, name="text")
+
+
+# ---------------------------------------------------------------------------
 # Design rules — .kicad_pro board constraints
 # ---------------------------------------------------------------------------
 

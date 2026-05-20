@@ -30,6 +30,12 @@ Initial alpha release.
   reverted by "Update Symbols from Library"). Root sheet only; after the
   rename it checks the live PCB for the stale old net name and instructs
   F8 / `kcd sync` (KiCad 10 exposes no headless forward annotation)
+- `kcd edit text` — edit schematic text: `edit text titleblock` sets a
+  title-block field (title / company / rev / date / comment1..9), creating
+  the title block when the sheet lacks one; `edit text set` replaces a free
+  graphic text item, matched by its current string with `--at` to
+  disambiguate when several share it. Root sheet only; offline S-expr edits
+  via kicad-skip — net labels are untouched (use `edit netlabel` / `edit net`)
 - `kcd edit designrules` — set a board design-rule constraint in the
   `.kicad_pro` file: mutates a `board.design_settings.rules` key (the DRC
   constraint minimums — clearance, track width, via/hole sizes). Validates the

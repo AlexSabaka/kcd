@@ -468,6 +468,103 @@ def rename_net(
     }
 
 
+def set_titleblock_field(
+    sch_path: Path,
+    field: str,
+    value: str,
+    comment_number: int | None = None,
+) -> dict[str, Any]:
+    """Set a title-block field on one schematic sheet (raw S-expr).
+
+    `field` is `title`, `company`, `rev`, `date`, or `comment` (with
+    `comment_number` 1-9). The `(title_block ...)` block is created — inserted
+    after `(paper ...)` — when the sheet carries none. An existing field is
+    updated in place; a missing one is appended.
+    """
+    tree = sexp.parse(sch_path.read_text())
+    tb = _sexp_child(tree, "title_block")
+    if tb is None:
+        tb = ["title_block"]
+        _insert_title_block(tree, tb)
+
+    before: str | None = None
+    if field == "comment":
+        target = None
+        for child in tb:
+            if (
+                isinstance(child, list) and len(child) >= 3
+                and child[0] == "comment"
+                and str(child[1]) == str(comment_number)
+            ):
+                target = child
+                break
+        if target is not None:
+            before = str(target[2])
+            target[2] = sexp.Quoted(value)
+        else:
+            tb.append(["comment", str(comment_number), sexp.Quoted(value)])
+    else:
+        target = _sexp_child(tb, field)
+        if target is not None and len(target) >= 2:
+            before = str(target[1])
+            target[1] = sexp.Quoted(value)
+        elif target is not None:
+            target.append(sexp.Quoted(value))
+        else:
+            tb.append([field, sexp.Quoted(value)])
+
+    sch_path.write_text(sexp.dumps(tree))
+    return {
+        "field": f"comment{comment_number}" if field == "comment" else field,
+        "value": value,
+        "before": before,
+    }
+
+
+def set_text(
+    sch_path: Path,
+    match: str,
+    new: str,
+    at: tuple[float, float] | None = None,
+) -> dict[str, Any]:
+    """Replace the string of a free graphic text item (raw S-expr).
+
+    Matches top-level `(text "<match>" ...)` annotation nodes by their current
+    string; `at` disambiguates when several share it. Net labels (`label` /
+    `global_label`) are not touched — only `(text ...)` items.
+
+    Raises:
+        SchEditError: nothing matches, or several do and no `at` was given.
+    """
+    tree = sexp.parse(sch_path.read_text())
+    matches: list[list] = []
+    for node in tree:
+        if not (isinstance(node, list) and len(node) >= 2 and node[0] == "text"):
+            continue
+        if str(node[1]) != match:
+            continue
+        if at is not None and not _xy_eq(_sexp_text_xy(node), at):
+            continue
+        matches.append(node)
+
+    if not matches:
+        where = f" at {_fmt_xy(at)}" if at is not None else ""
+        raise SchEditError(f"No text {match!r}{where} found in {sch_path.name}")
+    if at is None and len(matches) > 1:
+        spots = "; ".join(_fmt_xy(_sexp_text_xy(n)) for n in matches)
+        raise SchEditError(
+            f"{len(matches)} text items match {match!r} — pass --at to pick "
+            f"one ({spots})"
+        )
+
+    updated: list[dict[str, Any]] = []
+    for node in matches:
+        node[1] = sexp.Quoted(new)
+        updated.append({"before": match, "after": new, "at": _sexp_text_xy(node)})
+    sch_path.write_text(sexp.dumps(tree))
+    return {"updated": updated}
+
+
 def symbol_pin_geometry(sch_path: Path, ref: str) -> dict[str, Any]:
     """Pin numbers and world positions for symbol `ref` (via kicad-skip).
 
@@ -872,6 +969,34 @@ def _patch_lib_symbol_value(def_node: list, value: str) -> None:
     val = _sexp_value_property(def_node)
     if val is not None and len(val) >= 3:
         val[2] = sexp.Quoted(value)
+
+
+def _insert_title_block(tree: list, tb: list) -> None:
+    """Insert a fresh `(title_block ...)` into a `.kicad_sch` tree.
+
+    KiCad orders it after `(paper ...)` and before `(lib_symbols ...)`; fall
+    back to either anchor, else append.
+    """
+    for i, child in enumerate(tree):
+        if isinstance(child, list) and child and child[0] == "paper":
+            tree.insert(i + 1, tb)
+            return
+    for i, child in enumerate(tree):
+        if isinstance(child, list) and child and child[0] == "lib_symbols":
+            tree.insert(i, tb)
+            return
+    tree.append(tb)
+
+
+def _sexp_text_xy(node: list) -> list[float]:
+    """The `[x, y]` of a `(text ...)` node's `(at ...)` child."""
+    at = _sexp_child(node, "at")
+    if at is not None and len(at) >= 3:
+        try:
+            return [float(at[1]), float(at[2])]
+        except (ValueError, TypeError):
+            return [0.0, 0.0]
+    return [0.0, 0.0]
 
 
 def _sexp_symbol_reference(symbol_node: list) -> str | None:
