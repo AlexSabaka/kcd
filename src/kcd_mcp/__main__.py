@@ -435,16 +435,22 @@ def kcd_edit_designrules(
     project: str,
     rule: str,
     value: str,
+    force: bool = False,
     no_snapshot: bool = False,
 ) -> dict[str, Any]:
     """Set a board design-rule constraint in the .kicad_pro file.
 
     `rule` is a board.design_settings.rules key (e.g. min_track_width,
     min_clearance, min_via_diameter); `value` is mm for distances, true/false
-    for flags. Call with an unknown rule to see the valid keys. Note: if KiCad
-    has the project open it may overwrite this on its next save.
+    for flags. Call with an unknown rule to see the valid keys.
+
+    Refuses with `project_open_in_kicad` when KiCad has the project loaded —
+    its cached settings would overwrite the edit on the next save; set
+    `force=True` to write anyway.
     """
     args = ["edit", "designrules", project, "--rule", rule, "--value", value]
+    if force:
+        args.append("--force")
     if no_snapshot:
         args.append("--no-snapshot")
     return _run(args)
@@ -764,15 +770,31 @@ def kcd_render_3d(project: str, out: str, side: str = "top") -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def kcd_drc(project: str) -> dict[str, Any]:
-    """Run Design Rule Check on the PCB and return the report."""
-    return _run(["drc", project])
+def kcd_drc(project: str, full: bool = False) -> dict[str, Any]:
+    """Run Design Rule Check on the PCB and return a folded report.
+
+    Violations are grouped by (type, severity) with a small per-group sample
+    inline; set `full=True` to inline every occurrence. The complete report
+    is always written to the artifact file regardless.
+    """
+    args = ["drc", project]
+    if full:
+        args.append("--full")
+    return _run(args)
 
 
 @mcp.tool()
-def kcd_erc(project: str) -> dict[str, Any]:
-    """Run Electrical Rule Check on the schematic and return the report."""
-    return _run(["erc", project])
+def kcd_erc(project: str, full: bool = False) -> dict[str, Any]:
+    """Run Electrical Rule Check on the schematic and return a folded report.
+
+    Violations are grouped by (type, severity) with a small per-group sample
+    inline; set `full=True` to inline every occurrence. The complete report
+    is always written to the artifact file regardless.
+    """
+    args = ["erc", project]
+    if full:
+        args.append("--full")
+    return _run(args)
 
 
 @mcp.tool()
