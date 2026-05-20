@@ -148,10 +148,11 @@ kcd edit symbol        <proj> --ref U1 --to-lib-id <lib:sym> [--pin-map "1=2,...
 kcd edit net           <proj> --from <OLD> --to <NEW> [--json]   # lib_id-aware net rename
 kcd edit text titleblock <proj> --field <F> --value <V> [--json] # title/company/rev/date/commentN
 kcd edit text set      <proj> --match <OLD> --to <NEW> [--at X,Y] [--json]  # free graphic text
-kcd edit designrules   <proj> --rule <key> --value <v> [--json]  # .kicad_pro DRC constraint
+kcd edit designrules   <proj> --rule <key> --value <v> [--force] [--json]  # .kicad_pro DRC constraint; --force overrides the open-project guard
 
 # Change (PCB - needs KiCad open via IPC)
 kcd edit move-fp <proj> --ref R5 --x 100 --y 50 [--rotation 90] [--json]
+kcd edit delete-fp <proj> --ref U3 [--json]      # delete a footprint from the PCB (orphan cleanup)
 kcd edit track delete <proj> [--net N] [--from X,Y] [--to X,Y] [--layer L] [--json]
 kcd edit track modify <proj> [--net N] [--from X,Y] [--to X,Y] --width W [--set-layer L] [--set-net N] [--json]
 kcd edit via add      <proj> --net N --at X,Y [--diameter D] [--drill D] [--json]

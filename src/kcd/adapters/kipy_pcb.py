@@ -472,6 +472,40 @@ def move_footprint(reference: str, x_mm: float, y_mm: float, rotation_deg: float
     raise LookupError(f"Footprint {reference!r} not found on board")
 
 
+def delete_footprint(expected_pcb: _Path, reference: str) -> dict[str, Any]:
+    """Delete a footprint from the open board by reference designator.
+
+    The PCB-side counterpart of `edit delete` (which is schematic-only):
+    removes the whole footprint and everything in it. Intended for orphan
+    board footprints that have no schematic backing.
+
+    Persists via `board.save()` — see the move-fp caveat.
+
+    Raises:
+        LookupError: no footprint on the board carries `reference`.
+    """
+    assert_board_is(expected_pcb)
+    board = get_board()
+    for fp in board.get_footprints():
+        try:
+            ref = fp.reference_field.text.value
+        except Exception:
+            continue
+        if ref == reference:
+            deleted = _footprint_to_dict(fp)
+            # Best-effort: a non-empty associated-symbol sheet name means
+            # this footprint is backed by a schematic symbol, so deleting it
+            # board-side opens sch<->PCB drift kcd can't forward-annotate.
+            try:
+                had_symbol = bool(fp.proto.symbol_sheet_name)
+            except Exception:
+                had_symbol = False
+            board.remove_items([fp])
+            board.save()
+            return {"deleted": deleted, "count": 1, "had_symbol": had_symbol}
+    raise LookupError(f"Footprint {reference!r} not found on board")
+
+
 def add_track(
     net_name: str,
     start_mm: tuple[float, float],

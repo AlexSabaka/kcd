@@ -780,6 +780,42 @@ def move_fp(
         r.data = {"updated": kipy_pcb.move_footprint(ref, x, y, rotation)}
 
 
+@edit_app.command("delete-fp")
+def delete_fp(
+    project: str = typer.Argument(
+        None,
+        help="Project path. Omit to auto-detect from the board open in KiCad.",
+    ),
+    ref: str = typer.Option(..., "--ref", help="Reference of the footprint to delete"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Delete a footprint from the PCB. Requires KiCad open with the PCB editor.
+
+    The board-side counterpart of `edit delete` (which is schematic-only) —
+    use it to clear orphan footprints that have no schematic backing.
+    Deleting a footprint that *does* have a schematic symbol opens
+    schematic↔PCB drift kcd can't reconcile (KiCad 10 exposes no headless
+    forward annotation); the command warns when it detects that case.
+
+    Note: calls board.save() — see the warning emitted on every run.
+    """
+    with run_command("edit.delete-fp", json_) as r:
+        proj, r.snapshot_before = _pre_edit(
+            project, f"delete footprint {ref}", no_snapshot, auto=True
+        )
+        r.warn(_BOARD_SAVE_WARNING)
+        from kcd.adapters import kipy_pcb
+        result = kipy_pcb.delete_footprint(proj.pcb, ref)
+        if result.get("had_symbol"):
+            r.warn(
+                f"Footprint {ref} has an associated schematic symbol — "
+                "deleting it from the PCB leaves the schematic out of sync "
+                "and kcd cannot forward-annotate the removal."
+            )
+        r.data = result
+
+
 # ---------------------------------------------------------------------------
 # PCB copper edits — tracks, vias, zones (kipy IPC)
 # ---------------------------------------------------------------------------

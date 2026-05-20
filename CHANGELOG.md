@@ -47,6 +47,12 @@ Initial alpha release.
   writes anyway. Round-2 field report bug #3 hardened the original
   warn-only behaviour into a hard guard
 - `kcd edit move-fp` — PCB footprint move via kipy IPC
+- `kcd edit delete-fp` — delete a footprint from the PCB by reference via
+  kipy IPC: the board-side counterpart of `edit delete` (which is
+  schematic-only), for clearing orphan footprints with no schematic
+  backing. Warns when the footprint has an associated schematic symbol —
+  deleting it board-side opens schematic↔PCB drift kcd cannot
+  forward-annotate. Round-2 field report gap
 - `kcd edit track delete|modify` — PCB copper track editing via kipy IPC:
   delete tracks, or change their width / layer / net assignment. Tracks
   are selected by whole net (`--net`) or a single segment (`--from`/`--to`,

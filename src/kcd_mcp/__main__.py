@@ -482,6 +482,33 @@ def kcd_edit_move_fp(
 
 
 @mcp.tool()
+def kcd_edit_delete_fp(
+    ref: str,
+    project: str | None = None,
+    no_snapshot: bool = False,
+) -> dict[str, Any]:
+    """Delete a footprint from the PCB by reference designator.
+
+    The board-side counterpart of `kcd_edit_delete` (schematic-only) — use it
+    to remove orphan footprints that have no schematic backing. Deleting a
+    footprint that has a schematic symbol opens schematic↔PCB drift kcd can't
+    reconcile; the result warns when it detects that.
+
+    Requires KiCad open with PCB editor only — having both editors open at
+    once triggers a known KiCad 10.0.2 IPC routing segfault. If `project` is
+    omitted, kcd auto-detects from the currently-open board. Calls
+    board.save() — persists any unsaved PCB-editor changes too.
+    """
+    args = ["edit", "delete-fp"]
+    if project:
+        args.append(project)
+    args += ["--ref", ref]
+    if no_snapshot:
+        args.append("--no-snapshot")
+    return _run(args)
+
+
+@mcp.tool()
 def kcd_edit_track_delete(
     net: str | None = None,
     from_xy: str | None = None,
