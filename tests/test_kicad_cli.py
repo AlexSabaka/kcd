@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -58,3 +59,30 @@ def test_layer_name_falls_back_on_unknown() -> None:
     """Unrecognized ints must not crash — fall back to str()."""
     assert _layer_name(999_999) == "999999"
     assert _layer_name("garbage") == "garbage"
+
+
+# ---------------------------------------------------------------------------
+# _rasterize_svg — bundled resvg_py, no external app (Round-4 field report B3-B)
+# ---------------------------------------------------------------------------
+
+def test_rasterize_svg_produces_a_png(tmp_path: Path) -> None:
+    """The bundled resvg engine turns an SVG into a real PNG with no
+    rsvg-convert / inkscape on PATH."""
+    svg = tmp_path / "in.svg"
+    svg.write_text(
+        '<svg width="40" height="20" xmlns="http://www.w3.org/2000/svg">'
+        '<rect width="40" height="20" fill="red"/></svg>'
+    )
+    out = tmp_path / "out.png"
+    kicad_cli._rasterize_svg(svg, out, dpi=150)
+    assert out.is_file()
+    assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_rasterize_svg_raises_cli_error_on_bad_svg(tmp_path: Path) -> None:
+    """A malformed SVG surfaces as CliError — the type the render commands
+    catch to degrade gracefully to SVG output."""
+    svg = tmp_path / "bad.svg"
+    svg.write_text("this is not svg at all {{{")
+    with pytest.raises(kicad_cli.CliError):
+        kicad_cli._rasterize_svg(svg, tmp_path / "out.png", dpi=150)

@@ -91,34 +91,24 @@ def export_sch_pdf(cli: str, sch: Path, out: Path) -> Path:
 
 
 def _rasterize_svg(svg: Path, out: Path, dpi: int) -> None:
-    """Rasterize an SVG to PNG via rsvg-convert, falling back to inkscape.
+    """Rasterize an SVG to PNG via the bundled `resvg_py` (Rust resvg).
 
     kicad-cli has no direct PNG export for schematics or flat 2D boards, so
-    PNG output goes via SVG + an external rasterizer. Raises `CliError` when
-    neither tool is on PATH.
+    PNG output goes via SVG. `resvg_py` ships a self-contained wheel — no
+    external rasterizer app (rsvg-convert / inkscape) is required. Raises
+    `CliError` if resvg cannot rasterize the SVG.
     """
+    import resvg_py
+
     out.parent.mkdir(parents=True, exist_ok=True)
     try:
-        subprocess.run(
-            ["rsvg-convert", "-d", str(dpi), "-p", str(dpi),
-             "-o", str(out), str(svg)],
-            check=True, capture_output=True, text=True,
-        )
-        return
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        pass
-    try:
-        subprocess.run(
-            ["inkscape", "--export-type=png", f"--export-dpi={dpi}",
-             f"--export-filename={out}", str(svg)],
-            check=True, capture_output=True, text=True,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        png = resvg_py.svg_to_bytes(svg_path=str(svg), dpi=dpi)
+    except Exception as e:
         raise CliError(
             ["png-rasterize"], 1, "",
-            "Neither rsvg-convert nor inkscape found on PATH for PNG "
-            "rasterization. Install one, or use --format svg/pdf."
+            f"resvg could not rasterize {svg.name} to PNG: {e}",
         ) from e
+    out.write_bytes(bytes(png))
 
 
 def export_sch_png(cli: str, sch: Path, out: Path, dpi: int = 300) -> Path:

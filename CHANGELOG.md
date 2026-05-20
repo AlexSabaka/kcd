@@ -189,9 +189,8 @@ Initial alpha release.
   content block alongside the JSON envelope (capped to stay under the 1MB
   MCP result limit; an oversize preview is skipped with a warning rather
   than failing the call). `kcd render pcb` gains a `png` format — a flat 2D
-  layer view rasterized from SVG via rsvg-convert/inkscape — so the PCB
-  preview shows copper, not a soldermask-covered 3D view. Round-3 field
-  report B3.
+  layer view rasterized from SVG — so the PCB preview shows copper, not a
+  soldermask-covered 3D view. Round-3 field report B3.
 - `kcd analyze fab-gate` reconciles its routing verdict against DRC. The
   vendored gate's routing check trusts net-level `routing_complete` and is
   blind to pad-level gaps — it reported "all nets routed" while DRC found
@@ -222,6 +221,15 @@ Initial alpha release.
   vendor library) was invisible. Such libraries now appear with
   `location: embedded`, and every entry gains a `location` field
   (standard | project | embedded). Round-3 field report B10.
+- `kcd render *` PNG output no longer depends on an external rasterizer
+  app. PNG export — and the MCP inline-image previews for schematics and
+  flat 2D PCB layer views — was rasterized via `rsvg-convert` / `inkscape`;
+  hosts with neither got a hard `cli_failed`. SVG→PNG now goes through the
+  bundled `resvg-py` (MIT; a self-contained wheel of the Rust resvg
+  engine), so the PNG path works on every install with no system setup.
+  If resvg ever fails on a specific SVG, `render sch|pcb --format png`
+  degrades to emitting the SVG with a warning instead of failing the
+  command. Round-4 field report B3-B.
 
 ### Known limitations
 - Diff-pair length tuning: not implemented

@@ -28,6 +28,7 @@ dependencies = [
     "pydantic>=2.6",
     "kicad-python>=0.5",
     "kicad-skip>=0.2.5",
+    "resvg-py>=0.3.2",
 ]
 
 [project.optional-dependencies]

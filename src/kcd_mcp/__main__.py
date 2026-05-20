@@ -790,8 +790,8 @@ def kcd_render_sch(project: str, out: str, fmt: str = "svg") -> Any:
     """Render the schematic and return an inline PNG preview.
 
     fmt: svg | png | pdf — written to `out` on disk. An inline PNG preview is
-    also returned so the agent can see the render directly.
-    PNG rasterization needs rsvg-convert or inkscape on PATH.
+    also returned so the agent can see the render directly. PNG rasterization
+    is handled by the bundled resvg engine — no external tools needed.
     """
     env = _run(["render", "sch", project, "--out", out, "--format", fmt])
     if not env.get("ok"):

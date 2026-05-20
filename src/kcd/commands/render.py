@@ -37,8 +37,18 @@ def sch(
             kicad_cli.export_sch_pdf(cfg.kicad_cli, proj.sch, out)
             r.add_artifact("schematic_pdf", str(out))
         elif fmt == "png":
-            kicad_cli.export_sch_png(cfg.kicad_cli, proj.sch, out, dpi=dpi)
-            r.add_artifact("schematic_png", str(out), dpi=dpi)
+            try:
+                kicad_cli.export_sch_png(cfg.kicad_cli, proj.sch, out, dpi=dpi)
+                r.add_artifact("schematic_png", str(out), dpi=dpi)
+            except kicad_cli.CliError:
+                fmt = "svg"
+                kicad_cli.export_sch_svg(cfg.kicad_cli, proj.sch, out.parent)
+                for svg in sorted(out.parent.glob("*.svg")):
+                    r.add_artifact("schematic_svg", str(svg))
+                r.warn(
+                    "PNG rasterization failed; emitted SVG instead — the SVG "
+                    "renders fine, only the inline PNG preview is unavailable."
+                )
         else:
             raise CommandError("invalid_format", f"Unknown format {format_!r}; use svg, pdf, or png")
         r.data = {"project": proj.name, "format": fmt}
@@ -70,10 +80,22 @@ def pcb(
             kicad_cli.export_pcb_pdf(cfg.kicad_cli, proj.pcb, out, layers=layer_list)
             r.add_artifact("pcb_pdf", str(out), layers=layer_list)
         elif fmt == "png":
-            kicad_cli.export_pcb_png(
-                cfg.kicad_cli, proj.pcb, out, layers=layer_list, dpi=dpi
-            )
-            r.add_artifact("pcb_png", str(out), layers=layer_list, dpi=dpi)
+            try:
+                kicad_cli.export_pcb_png(
+                    cfg.kicad_cli, proj.pcb, out, layers=layer_list, dpi=dpi
+                )
+                r.add_artifact("pcb_png", str(out), layers=layer_list, dpi=dpi)
+            except kicad_cli.CliError:
+                fmt = "svg"
+                svg_out = out.with_suffix(".svg")
+                kicad_cli.export_pcb_svg(
+                    cfg.kicad_cli, proj.pcb, svg_out, layers=layer_list
+                )
+                r.add_artifact("pcb_svg", str(svg_out), layers=layer_list)
+                r.warn(
+                    "PNG rasterization failed; emitted SVG instead — the SVG "
+                    "renders fine, only the inline PNG preview is unavailable."
+                )
         else:
             raise CommandError(
                 "invalid_format", f"Unknown format {format_!r}; use svg, pdf, or png"
