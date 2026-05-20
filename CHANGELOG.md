@@ -192,6 +192,22 @@ Initial alpha release.
   layer view rasterized from SVG via rsvg-convert/inkscape — so the PCB
   preview shows copper, not a soldermask-covered 3D view. Round-3 field
   report B3.
+- `kcd analyze fab-gate` reconciles its routing verdict against DRC. The
+  vendored gate's routing check trusts net-level `routing_complete` and is
+  blind to pad-level gaps — it reported "all nets routed" while DRC found
+  unconnected pads. kcd now runs DRC after the gate and downgrades a
+  falsely-passing `routing_completeness` check to FAIL, recomputing the
+  gate summary and overall status. Round-3 field report B5.
+- `kcd analyze thermal` no longer reports a confident score from an empty
+  assessment. The vendored scorer returns 100 when there are no findings —
+  even when `components_assessed` is 0, i.e. nothing was evaluated. kcd now
+  nulls `thermal_score` and sets `thermal_score_status: insufficient_data`
+  when zero components were assessed. Round-3 field report B6.
+- MPN-coverage checks recognize the SnapEDA `MP` field. The schematic
+  analyzer's `_MPN_KEYS` alias set was blind to `MP` and `Mfr_Part_No`, so
+  SnapEDA-sourced parts undercounted MPN coverage to zero. Both aliases
+  added (a local patch to the vendored analyzer engine). Round-3 field
+  report B7.
 
 ### Known limitations
 - Diff-pair length tuning: not implemented

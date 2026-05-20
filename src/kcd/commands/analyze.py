@@ -32,7 +32,7 @@ from pathlib import Path
 
 import typer
 
-from kcd.adapters import analyzers
+from kcd.adapters import analyzers, kicad_cli
 from kcd.core import config as cfg_mod
 from kcd.core.output import CommandError, Result, run_command
 from kcd.core.project import Project, resolve
@@ -192,6 +192,93 @@ def _save_artifact(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(data, indent=2))
     r.add_artifact(kind, str(out_path))
+
+
+# --- analyzer false-confidence guards ----------------------------------------
+# The vendored analyzers report confident verdicts from partial or empty
+# evaluation. These post-process the analyzer JSON in kcd's own layer (the
+# engine itself is vendored and not modified here).
+
+def _recount_gate(data: dict) -> None:
+    """Recompute a fab-gate report's summary counts and overall status."""
+    checks = data.get("checks", [])
+    counts = {"pass": 0, "warn": 0, "fail": 0, "skip": 0}
+    for c in checks:
+        if isinstance(c, dict):
+            st = c.get("status", "skip")
+            counts[st] = counts.get(st, 0) + 1
+    data["summary"] = {"total_checks": len(checks), **counts}
+    if counts["fail"]:
+        data["overall_status"] = "FAIL"
+    elif counts["warn"]:
+        data["overall_status"] = "WARN"
+    elif counts["pass"]:
+        data["overall_status"] = "PASS"
+    else:
+        data["overall_status"] = "INCOMPLETE"
+
+
+def _reconcile_routing(data: dict, proj: Project, r: Result) -> None:
+    """Cross-check fab-gate's routing verdict against DRC unconnected pads.
+
+    The gate's routing check trusts net-level `routing_complete` and is blind
+    to pad-level gaps — it can PASS while DRC finds unconnected pads. Run DRC
+    and downgrade a falsely-passing routing check (Round-3 field report B5).
+    """
+    checks = data.get("checks")
+    if not isinstance(checks, list):
+        return
+    routing = next(
+        (c for c in checks
+         if isinstance(c, dict) and c.get("check_id") == "routing_completeness"),
+        None,
+    )
+    if routing is None or routing.get("status") != "pass":
+        return
+    try:
+        with tempfile.TemporaryDirectory(prefix="kcd-fabgate-drc-") as td:
+            raw = kicad_cli.run_drc(
+                cfg_mod.load().kicad_cli, proj.pcb, Path(td) / "drc.json"
+            )
+    except Exception as e:
+        r.warn(f"fab-gate could not cross-check routing against DRC: {e}")
+        return
+    unconnected = len(raw.get("unconnected_items", []) or [])
+    if unconnected == 0:
+        return
+    routing["status"] = "fail"
+    routing["message"] = (
+        f"DRC finds {unconnected} unconnected pad(s) — the net-level routing "
+        "check missed pad-level gaps"
+    )
+    details = routing.get("details") or {}
+    details["drc_unconnected"] = unconnected
+    routing["details"] = details
+    _recount_gate(data)
+    r.warn(
+        f"fab-gate routing check downgraded to FAIL — DRC reports "
+        f"{unconnected} unconnected pad(s) the gate's net-level check missed."
+    )
+
+
+def _flag_empty_thermal(data: dict, r: Result) -> None:
+    """Downgrade a thermal score computed from zero assessed components.
+
+    `compute_thermal_score` returns 100 when there are no findings — even
+    when `components_assessed` is 0, i.e. nothing was actually evaluated. A
+    confident 100 from an empty assessment is false-green (Round-3 B6).
+    """
+    summary = data.get("summary")
+    if not isinstance(summary, dict):
+        return
+    if summary.get("components_assessed", 0) == 0:
+        summary["thermal_score"] = None
+        summary["thermal_score_status"] = "insufficient_data"
+        r.warn(
+            "thermal_score set to insufficient_data — 0 components were "
+            "assessed (no load currents / MPNs to classify power parts); "
+            "the design is unevaluated, not verified."
+        )
 
 
 @contextmanager
@@ -370,6 +457,7 @@ def analyze_thermal_cmd(
             data = analyzers.run_analyzer_argv(
                 "analyze_thermal.py", ["-s", str(sch), "-p", str(pcb), *extra]
             )
+        _flag_empty_thermal(data, r)
         _lift_findings(data, r)
         _save_artifact(
             data, Path(out) if out else None,
@@ -399,6 +487,7 @@ def analyze_fab_gate_cmd(
             if strict:
                 argv.append("--strict")
             data = analyzers.run_analyzer_argv("fab_release_gate.py", argv)
+        _reconcile_routing(data, proj, r)
         _lift_findings(data, r)
         _save_artifact(
             data, Path(out) if out else None,

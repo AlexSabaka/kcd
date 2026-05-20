@@ -155,6 +155,10 @@ _MPN_KEYS = frozenset({
     "mpn", "mfg part", "partnumber", "part number", "part#",
     "manufacturer_part_number", "mfr no.", "mfr_no",
     "manufacturerpartnumber", "partno", "partno.", "mfr_part_number",
+    # kcd local patch (Round-3 field report B7): SnapEDA-sourced parts carry
+    # the manufacturer part number in an "MP" field; "Mfr_Part_No" is another
+    # common variant. Both were undercounting MPN coverage to zero.
+    "mp", "mfr_part_no",
 })
 _MANUFACTURER_KEYS = frozenset({
     "manufacturer", "mfr", "mfg",
