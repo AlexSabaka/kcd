@@ -43,7 +43,16 @@ def parity_cmd(
     with run_command("parity", json_) as r:
         proj = resolve(project)
         sch_symbols = skip_sch.list_symbols_all(proj)
-        sch_by_ref = {s["reference"]: s for s in sch_symbols if s.get("reference")}
+        # Power/flag symbols (#PWR, #FLG) carry KiCad's `#`-prefixed
+        # references: they have no footprint and never appear on a PCB by
+        # design. Excluding them keeps `schematic_only` showing genuinely
+        # un-placed components instead of dozens of power-flag false
+        # positives (Round-2 field report bug #4).
+        sch_by_ref = {
+            s["reference"]: s
+            for s in sch_symbols
+            if s.get("reference") and not s["reference"].startswith("#")
+        }
         payload: dict = {
             "project": proj.name,
             "pcb_available": False,

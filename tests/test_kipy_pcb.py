@@ -7,11 +7,17 @@ Live-IPC paths (list_footprints, move_footprint, etc.) are exercised by
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from kcd.adapters import kipy_pcb
-from kcd.adapters.kipy_pcb import _layer_enum, _layer_name, _ref_sort_key
+from kcd.adapters.kipy_pcb import (
+    _footprint_to_dict,
+    _layer_enum,
+    _layer_name,
+    _ref_sort_key,
+)
 from kcd.core.output import CommandError
 
 
@@ -77,6 +83,28 @@ def test_layer_enum_rejects_unknown_layer() -> None:
     with pytest.raises(CommandError) as exc:
         _layer_enum("Nonsense.Cu")
     assert exc.value.code == "bad_layer"
+
+
+# ---------------------------------------------------------------------------
+# _footprint_to_dict — library id read (Round-2 field report bug #2)
+# ---------------------------------------------------------------------------
+
+def test_footprint_to_dict_reads_library_id_from_definition() -> None:
+    """The fpid lives on `fp.definition.id` (library/name), not a
+    non-existent `fp.library_id` — the old path produced `""` for every
+    footprint and made `parity`'s footprint check non-functional."""
+    fp = SimpleNamespace(
+        definition=SimpleNamespace(
+            id=SimpleNamespace(library="Resistor_SMD", name="R_0805_2012Metric")
+        )
+    )
+    assert _footprint_to_dict(fp)["library_id"] == "Resistor_SMD:R_0805_2012Metric"
+
+
+def test_footprint_to_dict_library_id_degrades_to_empty() -> None:
+    """A footprint missing the definition still serializes (empty id), not
+    crashes mid-serialization."""
+    assert _footprint_to_dict(SimpleNamespace())["library_id"] == ""
 
 
 # ---------------------------------------------------------------------------

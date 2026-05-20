@@ -94,6 +94,18 @@ Initial alpha release.
   forms (`F.Cu`, `F_Cu`, `BL_F_Cu`) and `add_track` routes through it, so a
   layer read off one command feeds straight into another. Round-2 field
   report bug #1.
+- `kcd parity` (and PCB footprint readouts in `inspect`) now report the
+  board-side footprint library id. It was read from `fp.library_id`, an
+  attribute kipy's `FootprintInstance` does not have — the resulting
+  `AttributeError` was swallowed, so `library_id` came back `""` for every
+  footprint and `parity` flagged all 60+ components as footprint
+  mismatches. The id lives on the footprint *definition*
+  (`fp.definition.id.library` / `.name`). Round-2 field report bug #2.
+- `kcd parity` no longer reports `#PWR` / `#FLG` power-flag symbols as
+  `schematic_only` drift. KiCad's `#`-prefixed symbols carry no footprint
+  and never appear on a PCB by design; listing them buried the genuine
+  un-placed components under dozens of false positives. Round-2 field
+  report bug #4.
 - `kcd project current` schematic entries now carry a real filesystem `path`
   (the `.kicad_sch` file location). Previously the parser read kipy's
   `sheet_path.path_human_readable` field, which is the sheet-*hierarchy*

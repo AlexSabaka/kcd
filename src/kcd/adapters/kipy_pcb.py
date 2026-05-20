@@ -205,7 +205,9 @@ def list_footprints() -> list[dict[str, Any]]:
         except Exception:
             layer = ""
         try:
-            lib_id = f"{fp.library_id.library_nickname}:{fp.library_id.entry_name}"
+            # The library id lives on the footprint *definition*, not the
+            # board instance — `FootprintInstance` has no `library_id` attr.
+            lib_id = f"{fp.definition.id.library}:{fp.definition.id.name}"
         except Exception:
             lib_id = ""
         out.append({
@@ -726,7 +728,7 @@ def _footprint_to_dict(fp: Any) -> dict[str, Any]:
         "reference": _safe(lambda: fp.reference_field.text.value, "?"),
         "value": _safe(lambda: fp.value_field.text.value, ""),
         "library_id": _safe(
-            lambda: f"{fp.library_id.library_nickname}:{fp.library_id.entry_name}", ""
+            lambda: f"{fp.definition.id.library}:{fp.definition.id.name}", ""
         ),
         "layer": _safe(lambda: _layer_name(fp.layer), ""),
         "x_mm": _safe(lambda: _nm_to_mm(fp.position.x), 0.0),
