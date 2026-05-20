@@ -13,7 +13,7 @@ import typer
 
 from kcd.adapters import kicad_cli, skip_sch
 from kcd.core import config as cfg_mod
-from kcd.core.output import Result, run_command
+from kcd.core.output import CommandError, Result, run_command
 from kcd.core.project import Project, resolve, resolve_or_active
 from kcd.core.snapshot import SnapshotStore
 
@@ -224,6 +224,113 @@ def delete(
         deleted["sheet"] = sheet_name
         r.data = {"deleted": deleted}
         _post_edit_sch(proj, r, mtimes, no_render=no_render)
+
+
+# ---------------------------------------------------------------------------
+# Schematic structural edits — wires and net labels
+# ---------------------------------------------------------------------------
+
+wire_app = typer.Typer(help="Add or delete wire segments on the root sheet.")
+netlabel_app = typer.Typer(help="Add or delete net labels on the root sheet.")
+
+
+def _parse_xy(text: str) -> tuple[float, float]:
+    """Parse an `'X,Y'` coordinate option into a float pair (millimetres)."""
+    parts = text.split(",")
+    if len(parts) != 2:
+        raise CommandError("bad_coordinate", f"Expected 'X,Y', got {text!r}.")
+    try:
+        return float(parts[0]), float(parts[1])
+    except ValueError:
+        raise CommandError(
+            "bad_coordinate", f"Expected numeric 'X,Y', got {text!r}."
+        ) from None
+
+
+@wire_app.command("add")
+def wire_add(
+    project: str = typer.Argument(...),
+    from_: str = typer.Option(..., "--from", help="Start point 'X,Y' in mm"),
+    to: str = typer.Option(..., "--to", help="End point 'X,Y' in mm"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Add a wire segment between two points on the root schematic sheet."""
+    with run_command("edit.wire.add", json_) as r:
+        start, end = _parse_xy(from_), _parse_xy(to)
+        proj, r.snapshot_before = _pre_edit(
+            project, f"add wire {from_} -> {to}", no_snapshot
+        )
+        mtimes = skip_sch.snapshot_sheet_mtimes(proj)
+        r.data = {"added": skip_sch.add_wire(proj.sch, start, end)}
+        _post_edit_sch(proj, r, mtimes, no_render=no_render)
+
+
+@wire_app.command("delete")
+def wire_delete(
+    project: str = typer.Argument(...),
+    from_: str = typer.Option(..., "--from", help="Start point 'X,Y' in mm"),
+    to: str = typer.Option(..., "--to", help="End point 'X,Y' in mm"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Delete the wire with the given endpoints (either direction)."""
+    with run_command("edit.wire.delete", json_) as r:
+        start, end = _parse_xy(from_), _parse_xy(to)
+        proj, r.snapshot_before = _pre_edit(
+            project, f"delete wire {from_} -> {to}", no_snapshot
+        )
+        mtimes = skip_sch.snapshot_sheet_mtimes(proj)
+        r.data = {"deleted": skip_sch.delete_wire(proj.sch, start, end)}
+        _post_edit_sch(proj, r, mtimes, no_render=no_render)
+
+
+@netlabel_app.command("add")
+def netlabel_add(
+    project: str = typer.Argument(...),
+    text: str = typer.Option(..., "--text", help="Net label text"),
+    at: str = typer.Option(..., "--at", help="Position 'X,Y' in mm"),
+    rotation: float = typer.Option(0.0, "--rotation", help="Rotation in degrees"),
+    is_global: bool = typer.Option(False, "--global", help="Global label (default: local)"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Add a local or global net label on the root schematic sheet."""
+    with run_command("edit.netlabel.add", json_) as r:
+        pos = _parse_xy(at)
+        proj, r.snapshot_before = _pre_edit(
+            project, f"add label {text}", no_snapshot
+        )
+        mtimes = skip_sch.snapshot_sheet_mtimes(proj)
+        r.data = {"added": skip_sch.add_label(proj.sch, text, pos, rotation, is_global)}
+        _post_edit_sch(proj, r, mtimes, no_render=no_render)
+
+
+@netlabel_app.command("delete")
+def netlabel_delete(
+    project: str = typer.Argument(...),
+    text: str = typer.Option(..., "--text", help="Net label text"),
+    at: str = typer.Option(None, "--at", help="Position 'X,Y' to disambiguate"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Delete a net label by text (use --at when several share the name)."""
+    with run_command("edit.netlabel.delete", json_) as r:
+        pos = _parse_xy(at) if at else None
+        proj, r.snapshot_before = _pre_edit(
+            project, f"delete label {text}", no_snapshot
+        )
+        mtimes = skip_sch.snapshot_sheet_mtimes(proj)
+        r.data = skip_sch.delete_label(proj.sch, text, pos)
+        _post_edit_sch(proj, r, mtimes, no_render=no_render)
+
+
+edit_app.add_typer(wire_app, name="wire")
+edit_app.add_typer(netlabel_app, name="netlabel")
 
 
 # ---------------------------------------------------------------------------

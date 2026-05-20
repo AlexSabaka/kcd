@@ -139,6 +139,10 @@ kcd edit ref       <proj> --from R5 --to R10 [--json]
 kcd edit footprint <proj> --ref U1 --footprint <lib:fp> [--json]
 kcd edit prop      <proj> --ref U1 --field MPN --value LM358 [--json]
 kcd edit delete    <proj> --ref C3 [--json]
+kcd edit wire add      <proj> --from X,Y --to X,Y [--json]
+kcd edit wire delete   <proj> --from X,Y --to X,Y [--json]
+kcd edit netlabel add  <proj> --text NET --at X,Y [--global] [--json]
+kcd edit netlabel delete <proj> --text NET [--at X,Y] [--json]
 
 # Change (PCB - needs KiCad open via IPC)
 kcd edit move-fp <proj> --ref R5 --x 100 --y 50 [--rotation 90] [--json]

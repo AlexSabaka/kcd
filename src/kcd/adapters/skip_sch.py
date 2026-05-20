@@ -144,6 +144,104 @@ def delete_symbol(sch_path: Path, reference: str) -> dict[str, Any]:
     raise SchEditError(f"Symbol {reference!r} not found in {sch_path.name}")
 
 
+def add_wire(
+    sch_path: Path,
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> dict[str, Any]:
+    """Add a wire segment between two points (mm). Returns the new wire's info."""
+    sch = _load(sch_path)
+    wire = sch.wire.new()
+    wire.start_at([start[0], start[1]])
+    wire.end_at([end[0], end[1]])
+    sch.write(str(sch_path))
+    return {
+        "uuid": _elem_uuid(wire),
+        "start": [start[0], start[1]],
+        "end": [end[0], end[1]],
+    }
+
+
+def delete_wire(
+    sch_path: Path,
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> dict[str, Any]:
+    """Delete the wire whose two endpoints match `start`/`end` (either
+    direction). Raises SchEditError if no such wire exists."""
+    sch = _load(sch_path)
+    for wire in sch.wire:
+        ends = _wire_endpoints(wire)
+        if ends is not None and _endpoints_match(ends, start, end):
+            wire.delete()
+            sch.write(str(sch_path))
+            return {"start": list(ends[0]), "end": list(ends[1])}
+    raise SchEditError(
+        f"No wire from {_fmt_xy(start)} to {_fmt_xy(end)} found in {sch_path.name}"
+    )
+
+
+def add_label(
+    sch_path: Path,
+    text: str,
+    at: tuple[float, float],
+    rotation: float = 0.0,
+    is_global: bool = False,
+) -> dict[str, Any]:
+    """Add a local or global net label at a point. Returns the label's info."""
+    sch = _load(sch_path)
+    collection = sch.global_label if is_global else sch.label
+    label = collection.new()
+    label.value = text
+    label.move(at[0], at[1], rotation)
+    sch.write(str(sch_path))
+    return {
+        "uuid": _elem_uuid(label),
+        "text": text,
+        "at": [at[0], at[1], rotation],
+        "kind": "global" if is_global else "local",
+    }
+
+
+def delete_label(
+    sch_path: Path,
+    text: str,
+    at: tuple[float, float] | None = None,
+) -> dict[str, Any]:
+    """Delete net label(s) named `text` (local or global).
+
+    Without `at`, an unambiguous single match is removed; if several labels
+    share the name the call fails asking for `at` rather than guessing.
+    Raises SchEditError when nothing matches.
+    """
+    sch = _load(sch_path)
+    matches: list[tuple[str, Any, list[float]]] = []
+    for kind, collection in (("local", sch.label), ("global", sch.global_label)):
+        for label in list(collection):
+            if _label_value(label) != text:
+                continue
+            pos = _label_xy(label)
+            if at is not None and not _xy_eq(pos, at):
+                continue
+            matches.append((kind, label, pos))
+
+    if not matches:
+        where = f" at {_fmt_xy(at)}" if at is not None else ""
+        raise SchEditError(f"No label {text!r}{where} found in {sch_path.name}")
+    if at is None and len(matches) > 1:
+        spots = "; ".join(_fmt_xy(p) for _, _, p in matches)
+        raise SchEditError(
+            f"{len(matches)} labels named {text!r} — pass --at to pick one ({spots})"
+        )
+
+    deleted: list[dict[str, Any]] = []
+    for kind, label, pos in matches:
+        label.delete()
+        deleted.append({"text": text, "at": pos, "kind": kind})
+    sch.write(str(sch_path))
+    return {"deleted": deleted}
+
+
 def sheet_index(proj: Project) -> list[dict[str, Any]]:
     """Return the project's sheets in kicad-cli page order.
 
@@ -399,6 +497,56 @@ def trace_net(sch_path: Path, net_name: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _elem_uuid(elem: Any) -> str:
+    try:
+        return str(elem.uuid.value)
+    except Exception:
+        return ""
+
+
+def _wire_endpoints(wire: Any) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    try:
+        s = wire.start.value
+        e = wire.end.value
+        return (float(s[0]), float(s[1])), (float(e[0]), float(e[1]))
+    except Exception:
+        return None
+
+
+def _xy_eq(a: Any, b: Any, tol: float = 1e-3) -> bool:
+    return abs(a[0] - b[0]) < tol and abs(a[1] - b[1]) < tol
+
+
+def _endpoints_match(
+    ends: tuple[tuple[float, float], tuple[float, float]],
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> bool:
+    a, b = ends
+    return (_xy_eq(a, start) and _xy_eq(b, end)) or (
+        _xy_eq(a, end) and _xy_eq(b, start)
+    )
+
+
+def _label_value(label: Any) -> str | None:
+    try:
+        return label.value
+    except Exception:
+        return None
+
+
+def _label_xy(label: Any) -> list[float]:
+    try:
+        v = label.at.value
+        return [float(v[0]), float(v[1])]
+    except Exception:
+        return [0.0, 0.0]
+
+
+def _fmt_xy(xy: tuple[float, float]) -> str:
+    return f"{xy[0]},{xy[1]}"
+
 
 def _iter_symbol_pins(sym: Any):
     """Yield kicad-skip `SymbolPin` objects for a symbol.

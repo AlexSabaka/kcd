@@ -13,6 +13,9 @@ Initial alpha release.
   resolve (standard KiCad symbol dir + project `sym-lib-table`). Foundation
   for the Wave 4/5 schematic-editing surface
 - `kcd edit value|ref|footprint|prop|delete` — offline schematic edits via kicad-skip
+- `kcd edit wire add|delete`, `kcd edit netlabel add|delete` — structural
+  schematic edits: add/remove wire segments and local/global net labels on
+  the root sheet (kicad-skip)
 - `kcd edit move-fp` — PCB footprint move via kipy IPC
 - `kcd net list|pcb|of|trace` — net queries: `net list` names schematic
   nets, `net pcb` lists board nets with pad/track counts, `net of` returns
