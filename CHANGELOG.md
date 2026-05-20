@@ -269,6 +269,17 @@ Initial alpha release.
   board fills the render. `export pdf --target pcb` keeps the framed sheet.
   Round-5 field report R5-1.
 
+### Added (continued)
+- `kcd render pcb` gains `--region-ref` / `--region-bbox` — render a cropped
+  sub-area instead of the whole board, so fine placement (a 1 mm courtyard
+  overlap, a part nudge) is actually visible. `--region-ref REF` centres a
+  `--region-window` mm square (default 20) on a footprint; `--region-bbox
+  x1,y1,x2,y2` is an explicit mm window. The board-area SVG is cropped by
+  rewriting its viewBox, and PNG rasterization dpi scales up so a zoomed
+  region keeps full-board pixel detail. svg/png only; needs KiCad open (the
+  board outline bbox and footprint position are read over IPC). Round-5
+  field report R5-2.
+
 ### Known limitations
 - Diff-pair length tuning: not implemented
 - Specctra DSN export: not headless (manual KiCad step required)

@@ -115,7 +115,7 @@ kcd snapshot create|list|restore|diff <proj> [--json]
 
 # See
 kcd render sch <proj> --out <file> [--format svg|png|pdf] [--json]
-kcd render pcb <proj> --out <file> [--format svg|pdf|png] [--json]
+kcd render pcb <proj> --out <file> [--format svg|pdf|png] [--region-ref REF | --region-bbox x1,y1,x2,y2] [--region-window MM] [--json]
 kcd render 3d  <proj> --out <file> [--side top|bottom] [--json]
 
 # Read
@@ -183,7 +183,8 @@ kcd route track <proj> --net VCC --from 100,50 --to 110,50 --layer F.Cu --width 
 kcd route freeroute <proj> --dsn proj.dsn --out-ses proj.ses --passes 100
 
 # Export
-kcd export gerber <proj> --out ./gerbers/
+kcd export gerber <proj> --out ./gerbers/   # gerbers + drill files (complete fab package)
+kcd export drill  <proj> --out ./gerbers/   # drill files only
 kcd export bom    <proj> --out bom.csv
 kcd export step   <proj> --out board.step
 kcd export pdf    <proj> --out board.pdf --target pcb|sch

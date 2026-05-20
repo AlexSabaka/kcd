@@ -803,17 +803,38 @@ def kcd_render_sch(project: str, out: str, fmt: str = "svg") -> Any:
 
 
 @mcp.tool(structured_output=False)
-def kcd_render_pcb(project: str, out: str, fmt: str = "svg") -> Any:
+def kcd_render_pcb(
+    project: str,
+    out: str,
+    fmt: str = "svg",
+    region_ref: str | None = None,
+    region_bbox: str | None = None,
+    region_window: float = 20.0,
+) -> Any:
     """Render the PCB (flat 2D layer view) and return an inline PNG preview.
 
     fmt: svg | pdf | png — written to `out` on disk. An inline PNG preview is
     also returned so the agent can see the render directly.
+
+    region_ref / region_bbox crop the render to a sub-area for fine-placement
+    inspection (svg/png only, needs KiCad open): region_ref centres a
+    region_window-mm square on a footprint; region_bbox is 'x1,y1,x2,y2' mm.
     """
-    env = _run(["render", "pcb", project, "--out", out, "--format", fmt])
+    region_args: list[str] = []
+    if region_ref:
+        region_args += [
+            "--region-ref", region_ref, "--region-window", str(region_window),
+        ]
+    if region_bbox:
+        region_args += ["--region-bbox", region_bbox]
+    env = _run(
+        ["render", "pcb", project, "--out", out, "--format", fmt, *region_args]
+    )
     if not env.get("ok"):
         return env
     preview = out if fmt == "png" else _render_preview(
-        ["render", "pcb", project, "--format", "png", "--dpi", "150"]
+        ["render", "pcb", project, "--format", "png", "--dpi", "150",
+         *region_args]
     )
     return _attach_image(env, preview)
 

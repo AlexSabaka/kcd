@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import typer
@@ -54,6 +55,128 @@ def sch(
         r.data = {"project": proj.name, "format": fmt}
 
 
+# --- region cropping for `render pcb` (Round-5 field report R5-1/R5-2) -------
+# A full-board PCB render is too coarse for fine placement work. `--region-*`
+# crops the SVG to a sub-area: the board-area SVG (kicad-cli page-size-mode 2)
+# spans the board outline bbox, so a mm window is the same fraction of the
+# viewBox as it is of the board.
+
+_VIEWBOX_RE = re.compile(r'viewBox\s*=\s*"([^"]+)"')
+_REGION_DPI_CAP = 2400
+
+
+def _resolve_region(
+    region_ref: str | None,
+    region_bbox: str | None,
+    region_window: float,
+) -> tuple[float, float, float, float] | None:
+    """Resolve the region options to an absolute-mm bbox, or None.
+
+    `--region-bbox` is explicit corners; `--region-ref` centres a
+    `--region-window` mm square on a footprint (resolved over live IPC).
+    """
+    if region_ref and region_bbox:
+        raise CommandError(
+            "bad_region", "Use either --region-ref or --region-bbox, not both."
+        )
+    if region_bbox:
+        parts = region_bbox.split(",")
+        if len(parts) != 4:
+            raise CommandError(
+                "bad_region",
+                f"--region-bbox needs 'x1,y1,x2,y2' in mm, got {region_bbox!r}.",
+            )
+        try:
+            x1, y1, x2, y2 = (float(p) for p in parts)
+        except ValueError:
+            raise CommandError(
+                "bad_region",
+                f"--region-bbox needs numeric mm values, got {region_bbox!r}.",
+            ) from None
+        return (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+    if region_ref:
+        from kcd.adapters import kipy_pcb
+        fp = kipy_pcb.find_footprint(region_ref)
+        cx, cy = fp["x_mm"], fp["y_mm"]
+        half = region_window / 2.0
+        return (cx - half, cy - half, cx + half, cy + half)
+    return None
+
+
+def _region_viewbox(
+    region: tuple[float, float, float, float],
+    board_bbox: dict[str, float],
+    viewbox: tuple[float, float, float, float],
+) -> tuple[float, float, float, float]:
+    """Map an absolute-mm region onto an SVG viewBox sub-rectangle.
+
+    Fractions are clamped to the board, so a window that runs off the edge
+    still yields a valid box.
+    """
+    rx1, ry1, rx2, ry2 = region
+    bx, by = board_bbox["min_x"], board_bbox["min_y"]
+    bw, bh = board_bbox["width"], board_bbox["height"]
+    vx, vy, vw, vh = viewbox
+    if bw <= 0 or bh <= 0:
+        raise ValueError("board bounding box has zero area")
+
+    def _clamp(v: float) -> float:
+        return max(0.0, min(1.0, v))
+
+    fx0, fx1 = _clamp((rx1 - bx) / bw), _clamp((rx2 - bx) / bw)
+    fy0, fy1 = _clamp((ry1 - by) / bh), _clamp((ry2 - by) / bh)
+    if fx1 <= fx0 or fy1 <= fy0:
+        raise ValueError("region does not overlap the board area")
+    return (vx + fx0 * vw, vy + fy0 * vh,
+            (fx1 - fx0) * vw, (fy1 - fy0) * vh)
+
+
+def _scale_svg_dim(text: str, attr: str, factor: float) -> str:
+    """Scale a numeric SVG root dimension (`width` / `height`) by `factor`."""
+    m = re.search(rf'\b{attr}\s*=\s*"([0-9.]+)([a-zA-Z%]*)"', text)
+    if not m:
+        return text
+    val = float(m.group(1)) * factor
+    return f'{text[:m.start()]}{attr}="{val:.6f}{m.group(2)}"{text[m.end():]}'
+
+
+def _crop_svg_region(
+    svg: Path,
+    region: tuple[float, float, float, float],
+    board_bbox: dict[str, float],
+) -> None:
+    """Rewrite a PCB SVG in place so it shows only `region` (absolute mm)."""
+    text = svg.read_text()
+    m = _VIEWBOX_RE.search(text)
+    if not m:
+        raise CommandError(
+            "no_viewbox", "PCB SVG has no viewBox — cannot crop to a region."
+        )
+    vx, vy, vw, vh = (float(n) for n in m.group(1).replace(",", " ").split())
+    try:
+        nx, ny, nw, nh = _region_viewbox(region, board_bbox, (vx, vy, vw, vh))
+    except ValueError as e:
+        raise CommandError("bad_region", str(e)) from e
+    text = (f'{text[:m.start()]}viewBox="{nx:.6f} {ny:.6f} {nw:.6f} {nh:.6f}"'
+            f'{text[m.end():]}')
+    text = _scale_svg_dim(text, "width", nw / vw)
+    text = _scale_svg_dim(text, "height", nh / vh)
+    svg.write_text(text)
+
+
+def _region_dpi(dpi: int, region: tuple[float, float, float, float],
+                board_bbox: dict[str, float]) -> int:
+    """Raise the rasterization dpi so a cropped region keeps full-board detail.
+
+    Zooming in should not cost pixels: scale dpi by board-width / region-width
+    so the region renders at the pixel density a full-board view would.
+    """
+    region_w = region[2] - region[0]
+    if region_w <= 0:
+        return dpi
+    return min(_REGION_DPI_CAP, round(dpi * board_bbox["width"] / region_w))
+
+
 @render_app.command("pcb")
 def pcb(
     project: str = typer.Argument(...),
@@ -65,25 +188,62 @@ def pcb(
         help="Comma-separated layer names",
     ),
     dpi: int = typer.Option(300, "--dpi", help="DPI for PNG rasterization"),
+    region_ref: str | None = typer.Option(
+        None, "--region-ref",
+        help="Crop to a window around this footprint ref (needs KiCad open).",
+    ),
+    region_bbox: str | None = typer.Option(
+        None, "--region-bbox", help="Crop to 'x1,y1,x2,y2' in mm.",
+    ),
+    region_window: float = typer.Option(
+        20.0, "--region-window",
+        help="Square window side in mm for --region-ref (default 20).",
+    ),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Render PCB layers to SVG, PDF, or PNG (flat 2D layer view)."""
+    """Render PCB layers to SVG, PDF, or PNG (flat 2D layer view).
+
+    `--region-ref` / `--region-bbox` crop the render to a sub-area so fine
+    placement is visible; they apply to svg/png only and need KiCad open.
+    """
     with run_command("render.pcb", json_) as r:
         cfg = cfg_mod.load()
         proj = resolve(project)
         layer_list = [s.strip() for s in layers.split(",") if s.strip()]
         fmt = format_.lower()
+        region = _resolve_region(region_ref, region_bbox, region_window)
+        board_b: dict[str, float] | None = None
+        if region is not None:
+            if fmt == "pdf":
+                raise CommandError(
+                    "bad_region", "--region-* applies to svg/png, not pdf."
+                )
+            from kcd.adapters import kipy_pcb
+            board_b = kipy_pcb.board_bbox()
+
         if fmt == "svg":
             kicad_cli.export_pcb_svg(cfg.kicad_cli, proj.pcb, out, layers=layer_list)
+            if region is not None and board_b is not None:
+                _crop_svg_region(out, region, board_b)
             r.add_artifact("pcb_svg", str(out), layers=layer_list)
         elif fmt == "pdf":
             kicad_cli.export_pcb_pdf(cfg.kicad_cli, proj.pcb, out, layers=layer_list)
             r.add_artifact("pcb_pdf", str(out), layers=layer_list)
         elif fmt == "png":
             try:
-                kicad_cli.export_pcb_png(
-                    cfg.kicad_cli, proj.pcb, out, layers=layer_list, dpi=dpi
-                )
+                if region is not None and board_b is not None:
+                    svg_tmp = out.parent / f".{out.stem}.svg"
+                    kicad_cli.export_pcb_svg(
+                        cfg.kicad_cli, proj.pcb, svg_tmp, layers=layer_list
+                    )
+                    _crop_svg_region(svg_tmp, region, board_b)
+                    kicad_cli._rasterize_svg(
+                        svg_tmp, out, _region_dpi(dpi, region, board_b)
+                    )
+                else:
+                    kicad_cli.export_pcb_png(
+                        cfg.kicad_cli, proj.pcb, out, layers=layer_list, dpi=dpi
+                    )
                 r.add_artifact("pcb_png", str(out), layers=layer_list, dpi=dpi)
             except kicad_cli.CliError:
                 fmt = "svg"
@@ -91,6 +251,8 @@ def pcb(
                 kicad_cli.export_pcb_svg(
                     cfg.kicad_cli, proj.pcb, svg_out, layers=layer_list
                 )
+                if region is not None and board_b is not None:
+                    _crop_svg_region(svg_out, region, board_b)
                 r.add_artifact("pcb_svg", str(svg_out), layers=layer_list)
                 r.warn(
                     "PNG rasterization failed; emitted SVG instead — the SVG "
@@ -101,6 +263,8 @@ def pcb(
                 "invalid_format", f"Unknown format {format_!r}; use svg, pdf, or png"
             )
         r.data = {"project": proj.name, "format": fmt, "layers": layer_list}
+        if region is not None:
+            r.data["region_mm"] = [round(v, 3) for v in region]
 
 
 @render_app.command("3d")

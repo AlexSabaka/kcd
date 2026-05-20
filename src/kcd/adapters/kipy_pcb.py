@@ -443,6 +443,38 @@ def find_footprint(reference: str) -> dict[str, Any]:
     raise LookupError(f"Footprint {reference!r} not found on board")
 
 
+def board_bbox() -> dict[str, float]:
+    """Bounding box of the board outline (Edge.Cuts), in mm.
+
+    Read-only IPC. Returns ``{min_x, min_y, width, height}`` — the extents
+    `kicad-cli`'s `--page-size-mode 2` (board area only) crops an SVG to, so
+    `render pcb --region-*` can map a mm window onto the SVG viewBox.
+    """
+    board = get_board()
+    edge = _layer_enum("Edge.Cuts")
+    shapes = [s for s in board.get_shapes()
+              if getattr(s, "layer", None) == edge]
+    if not shapes:
+        raise LookupError(
+            "No Edge.Cuts shapes on the board — cannot compute the board "
+            "outline bounding box."
+        )
+    boxes = board.get_item_bounding_box(shapes)
+    boxes = [b for b in (boxes if isinstance(boxes, list) else [boxes]) if b]
+    if not boxes:
+        raise LookupError(
+            "KiCad returned no bounding box for the board outline shapes."
+        )
+    merged = boxes[0]
+    for b in boxes[1:]:
+        merged.merge(b)
+    pos, size = merged.pos, merged.size
+    return {
+        "min_x": _nm_to_mm(pos.x), "min_y": _nm_to_mm(pos.y),
+        "width": _nm_to_mm(size.x), "height": _nm_to_mm(size.y),
+    }
+
+
 def move_footprint(reference: str, x_mm: float, y_mm: float, rotation_deg: float | None = None) -> dict[str, Any]:
     """Move a footprint to a new position; optionally rotate.
 
