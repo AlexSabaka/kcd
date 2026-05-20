@@ -1,5 +1,12 @@
 # kcd roadmap — mutation breadth & the sync bridge
 
+> **Status: RETIRED — fully delivered 2026-05-20.** All seven waves below
+> shipped (see `CHANGELOG.md` and the traceability table at the foot of this
+> doc); the one item left open — true headless schematic→PCB forward
+> annotation — is blocked upstream in KiCad 10, not on kcd. This document is
+> kept for historical reference. The next cycle of work starts from a fresh
+> field report.
+
 Source: `docs/Dove-to-Cheetah-Field-Report.md` (agentic field test on
 `Brushed_Flight_Controller`, 2026-05-19). The field report's verdict: kcd is an
 excellent *read + diagnose + lightly-edit* tool; the gap to *autonomous refactor*
