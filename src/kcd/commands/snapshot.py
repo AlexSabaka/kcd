@@ -11,6 +11,11 @@ from kcd.core.snapshot import SnapshotStore
 
 snapshot_app = typer.Typer(help="Git-backed snapshots for safe agentic editing.")
 
+# A unified diff at or below this many chars rides inline; a larger one (a
+# filled-zone .kicad_pcb diff is thousands of polygon points) spills to the
+# artifact so the envelope never overruns the 1MB MCP result cap.
+_DIFF_INLINE_BUDGET = 16_000
+
 
 @snapshot_app.command("create")
 def create(
@@ -129,10 +134,32 @@ def diff(
     ref_b: str = typer.Argument(None, help="Second ref (optional)"),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Show diff between snapshots (or one snapshot vs current state)."""
+    """Show diff between snapshots (or one snapshot vs current state).
+
+    The inline envelope carries a per-file summary (files changed, lines
+    added/removed). A small diff body also rides inline; a large one — a
+    filled-zone `.kicad_pcb` diff is thousands of polygon points — spills to
+    the artifact. The artifact always holds the complete unified diff.
+    """
     with run_command("snapshot.diff", json_) as r:
         cfg = cfg_mod.load()
         proj = resolve(project)
         store = SnapshotStore(proj, dir_name=cfg.snapshot_dir_name)
         text = store.diff(ref_a, ref_b)
-        r.data = {"diff": text, "ref_a": ref_a, "ref_b": ref_b}
+        summary = store.diff_summary(ref_a, ref_b)
+
+        diff_path = cfg.render_cache_dir / f"{proj.name}-diff.patch"
+        diff_path.parent.mkdir(parents=True, exist_ok=True)
+        diff_path.write_text(text)
+        r.add_artifact("snapshot_diff", str(diff_path))
+
+        data: dict[str, object] = {"ref_a": ref_a, "ref_b": ref_b, **summary}
+        if len(text) <= _DIFF_INLINE_BUDGET:
+            data["diff"] = text
+        else:
+            data["diff_inlined"] = False
+            r.warn(
+                f"diff is {len(text)} chars — too large to inline; the "
+                "complete unified diff is in the artifact"
+            )
+        r.data = data

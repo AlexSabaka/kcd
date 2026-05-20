@@ -175,6 +175,13 @@ Initial alpha release.
   verbatim, and bulk sections spill (named in `data.spilled.sections`).
   The artifact always holds the complete analyzer JSON. Round-3 field
   report B2.
+- `kcd snapshot diff` no longer overruns the 1MB MCP result cap. The full
+  unified diff was inlined into `data.diff` — a filled-zone `.kicad_pcb`
+  diff is thousands of polygon points and was hard-rejected. The inline
+  envelope now carries a per-file summary (files changed, lines
+  added/removed via `git diff --numstat`); a small diff body still rides
+  inline, a large one spills to the artifact, which always holds the
+  complete unified diff. Round-3 field report B4.
 
 ### Known limitations
 - Diff-pair length tuning: not implemented

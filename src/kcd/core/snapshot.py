@@ -159,6 +159,36 @@ class SnapshotStore:
             args.append(ref_b)
         return self._git(*args).stdout
 
+    def diff_summary(self, ref_a: str, ref_b: str | None = None) -> dict:
+        """Per-file added/removed line counts between two snapshots.
+
+        A zone fill in a `.kicad_pcb` makes the raw unified diff thousands of
+        lines — too large to inline. This `git diff --numstat` rollup is the
+        triage view (which files, how much) without the body. Binary files
+        carry `null` line counts (git's `-` numstat marker).
+        """
+        self._ensure_init()
+        args = ["diff", "--numstat", ref_a]
+        if ref_b:
+            args.append(ref_b)
+        files: list[dict] = []
+        total_added = total_removed = 0
+        for line in self._git(*args).stdout.splitlines():
+            if not line.strip():
+                continue
+            added, removed, path = line.split("\t", 2)
+            a = int(added) if added.isdigit() else None
+            rem = int(removed) if removed.isdigit() else None
+            files.append({"path": path, "added": a, "removed": rem})
+            total_added += a or 0
+            total_removed += rem or 0
+        return {
+            "files_changed": len(files),
+            "added": total_added,
+            "removed": total_removed,
+            "files": files,
+        }
+
     def _info_for(self, sha: str) -> SnapshotInfo:
         out = self._git(
             "show", "-s", f"--pretty=format:%H%x09%h%x09%cI%x09%s", sha
