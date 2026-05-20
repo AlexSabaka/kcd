@@ -140,6 +140,19 @@ def export_sch_bom(cli: str, sch: Path, out: Path, grouped: bool = True) -> Path
     return out
 
 
+def export_sch_netlist(cli: str, sch: Path, out: Path, fmt: str = "kicadxml") -> Path:
+    """Export the schematic netlist; returns the written file path.
+
+    `fmt` is a `kicad-cli sch export netlist --format` value. We default to
+    `kicadxml` because it's the structured form kcd parses for drift
+    detection; `kicadsexpr` is KiCad's native form for the legacy pcbnew
+    netlist-import path.
+    """
+    out.parent.mkdir(parents=True, exist_ok=True)
+    _run(cli, "sch", "export", "netlist", "--format", fmt, "--output", str(out), str(sch))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # PCB rendering / export
 # ---------------------------------------------------------------------------

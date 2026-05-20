@@ -15,6 +15,7 @@ from pathlib import Path as _Path
 from typing import Any
 
 from kcd.core.ipc import IpcUnavailable, connect, get_board
+from kcd.core.output import CommandError
 
 
 def _layer_name(layer: Any) -> str:
@@ -145,6 +146,40 @@ def list_open_documents() -> list[dict[str, Any]]:
             f"(Underlying: {last_api_error})"
         ) from last_api_error
     return out
+
+
+def assert_board_is(expected_pcb: _Path) -> None:
+    """Verify KiCad has the *expected* board open before whole-board IPC reads.
+
+    `list_footprints()` / `list_pad_nets()` etc. return whatever board is
+    active in KiCad's editor. Without this check, a whole-board command
+    (`parity`, `sync --check`) run against project A while KiCad shows
+    project B would silently compare A against B. Dove session-4 #25.
+
+    No-op when KiCad has no board open at all — the caller's own IPC call
+    then raises `IpcUnavailable` and degrades as it sees fit. Call this
+    *inside* the caller's `try/except IpcUnavailable` so a fully-unreachable
+    KiCad still degrades rather than erroring.
+
+    Raises:
+        CommandError(code="wrong_board_open"): a board is open and none of
+            the open boards resolve to `expected_pcb`.
+        IpcUnavailable: KiCad isn't reachable at all (propagated from
+            `list_open_documents`).
+    """
+    open_docs = list_open_documents()
+    open_boards = [d for d in open_docs if d.get("kind") == "board" and d.get("path")]
+    if not open_boards:
+        return
+    expected = expected_pcb.resolve()
+    if not any(_Path(b["path"]).resolve() == expected for b in open_boards):
+        paths = ", ".join(b["path"] for b in open_boards)
+        raise CommandError(
+            "wrong_board_open",
+            f"KiCad has {paths} open, not the requested {expected_pcb}. "
+            "Switch KiCad to the right PCB and retry, or run with KiCad "
+            "closed for a schematic-only result.",
+        )
 
 
 def list_footprints() -> list[dict[str, Any]]:
@@ -312,6 +347,37 @@ def net_members(net_name: str) -> dict[str, Any]:
         "vias": vias,
         "zones": zones,
     }
+
+
+def list_pad_nets() -> list[dict[str, Any]]:
+    """Return every pad on the open board with its footprint ref and net.
+
+    The board-wide pin->net map — the PCB side of `kcd sync`'s drift check.
+    A pad with no net comes back with `net` == "" (the caller normalizes
+    that and `unconnected-*` names to "no net").
+    """
+    board = get_board()
+    out: list[dict[str, Any]] = []
+    for fp in board.get_footprints():
+        try:
+            ref = fp.reference_field.text.value
+        except Exception:
+            ref = "?"
+        try:
+            fp_pads = list(fp.definition.pads)
+        except Exception:
+            fp_pads = []
+        for pad in fp_pads:
+            try:
+                num = pad.number
+            except Exception:
+                num = ""
+            out.append({
+                "footprint": ref,
+                "pad": num,
+                "net": _net_name(pad),
+            })
+    return out
 
 
 def find_footprint(reference: str) -> dict[str, Any]:

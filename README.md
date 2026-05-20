@@ -47,6 +47,7 @@ kcd edit     value|ref|footprint|prop|delete|add-symbol|add-power
 kcd net      list|pcb|of|trace
 kcd analyze  sch|pcb|gerbers                # knowledge-layer (vendored kicad-happy)
 kcd parity   <proj>                          # schematic ↔ PCB reference drift
+kcd sync     <proj> [--check]                # export netlist; --check diffs vs live PCB
 kcd drc      [--json]
 kcd erc      [--json]
 kcd route    track|freeroute|diff-pair|unroute

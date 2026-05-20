@@ -19,6 +19,7 @@ from kcd.commands.project import project_app
 from kcd.commands.render import render_app
 from kcd.commands.route import route_app
 from kcd.commands.snapshot import snapshot_app
+from kcd.commands.sync import sync_cmd
 
 app = typer.Typer(
     name="kcd",
@@ -52,6 +53,7 @@ app.add_typer(analyze_app, name="analyze")
 app.command("drc")(drc_cmd)
 app.command("erc")(erc_cmd)
 app.command("parity")(parity_cmd)
+app.command("sync")(sync_cmd)
 
 
 if __name__ == "__main__":

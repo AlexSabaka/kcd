@@ -19,6 +19,11 @@ Initial alpha release.
   value mismatches, footprint mismatches; degrades to schematic-only listing
   + warning when KiCad isn't open; fails with `error.code: "wrong_board_open"`
   when KiCad has a different PCB loaded than the requested project)
+- `kcd sync` — schematic→PCB forward-annotation bridge: exports the schematic
+  netlist and, with `--check`, diffs it against the live PCB — reporting
+  components to add/remove and net-membership changes (e.g. a `+12V`→`+BATT`
+  rename `parity` is blind to). Cannot push headlessly (KiCad 10 exposes no
+  forward-annotation API); emits the F8 "Update PCB from Schematic" instruction
 - `kcd analyze sch|pcb|gerbers` — knowledge-layer analysis via vendored
   `aklofas/kicad-happy` (v1.3.1, MIT). Wraps the upstream analyzers in the
   standard kcd JSON envelope; lifts findings with severity >= warning into

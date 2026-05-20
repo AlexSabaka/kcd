@@ -143,6 +143,7 @@ kcd edit move-fp <proj> --ref R5 --x 100 --y 50 [--rotation 90] [--json]
 kcd drc    <proj> [--json]
 kcd erc    <proj> [--json]
 kcd parity <proj> [--json]                       # schematic ↔ PCB ref drift
+kcd sync   <proj> [--check] [--json]             # export netlist; --check diffs vs live PCB
 
 # Analyze (knowledge-layer; vendored kicad-happy, read-only)
 kcd analyze sch     <proj>        [--out <file>] [--json]
