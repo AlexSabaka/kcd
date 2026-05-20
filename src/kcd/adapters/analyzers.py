@@ -1,10 +1,10 @@
-"""Subprocess wrappers around the vendored kicad-happy analyzer scripts.
+"""Subprocess wrappers around the vendored kicad-happy analyzer engine.
 
-The analyzers live at `skills/kicad/scripts/` — at the repo root in source
-layout, and under `kcd/skills/kicad/scripts/` in the installed wheel thanks
-to the `force-include` rule in `pyproject.toml`. Each prints structured JSON
-on stdout; this module subprocess-invokes them with a hard timeout and
-returns the parsed dict.
+The analyzer scripts live at `src/kcd/analyzers/` in the source tree and
+`kcd/analyzers/` in the installed wheel — shipped natively as part of the
+`kcd` package, no force-include needed. Each prints structured JSON on
+stdout; this module subprocess-invokes them with a hard timeout and returns
+the parsed dict.
 
 Pattern mirrors `kcd.adapters.kicad_cli._run`: no stdin, captured stdout/stderr,
 timeout. Non-zero exit (or empty/non-JSON stdout) raises `CliError` so the
@@ -23,25 +23,17 @@ from kcd.adapters.kicad_cli import CliError
 
 
 def _locate_scripts_dir() -> Path:
-    """Find the vendored analyzer scripts directory.
+    """Find the vendored analyzer engine directory.
 
-    Checks source-tree layout first, then the installed-wheel layout. Either
-    path produces the same answer for script *names* — only the parent
-    location differs depending on how kcd was installed.
+    `analyzers.py` sits at `kcd/adapters/`, so the engine is always its
+    grandparent's `analyzers/` — `src/kcd/analyzers/` in the source tree and
+    `kcd/analyzers/` in the installed wheel. One path resolves both layouts.
     """
-    here = Path(__file__).resolve()
-    candidates = [
-        # Source: src/kcd/adapters/analyzers.py → repo-root/skills/kicad/scripts/
-        here.parents[3] / "skills" / "kicad" / "scripts",
-        # Wheel:  kcd/adapters/analyzers.py     → kcd/skills/kicad/scripts/
-        here.parents[1] / "skills" / "kicad" / "scripts",
-    ]
-    for c in candidates:
-        if c.is_dir():
-            return c
+    scripts_dir = Path(__file__).resolve().parents[1] / "analyzers"
+    if scripts_dir.is_dir():
+        return scripts_dir
     raise FileNotFoundError(
-        "Could not locate skills/kicad/scripts/. Tried: "
-        + ", ".join(str(c) for c in candidates)
+        f"Could not locate the analyzer engine directory: {scripts_dir}"
     )
 
 
@@ -54,7 +46,7 @@ def run_analyzer(
     """Subprocess-invoke a vendored analyzer; return parsed JSON.
 
     Args:
-        script_name: filename in `skills/kicad/scripts/` (e.g.
+        script_name: filename in `kcd/analyzers/` (e.g.
             `"analyze_pcb.py"`).
         target: path to the file or directory the analyzer should consume
             (`.kicad_sch`, `.kicad_pcb`, or a gerber directory).
@@ -67,7 +59,7 @@ def run_analyzer(
 
     Raises:
         FileNotFoundError: `script_name` not present in
-            `skills/kicad/scripts/` (packaging / vendor mismatch).
+            `kcd/analyzers/` (packaging / vendor mismatch).
         CliError: subprocess returned non-zero exit, timed out, or wrote
             non-JSON to stdout. The envelope ladder maps this to
             `error.code: "cli_failed"`.

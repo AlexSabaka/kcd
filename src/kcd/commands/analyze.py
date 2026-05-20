@@ -1,7 +1,7 @@
 """`kcd analyze` — knowledge-layer analysis of KiCad projects.
 
 Three read-only subcommands wrap the vendored kicad-happy analyzers
-(`skills/kicad/scripts/analyze_{schematic,pcb,gerbers}.py`) in the
+(`src/kcd/analyzers/analyze_{schematic,pcb,gerbers}.py`) in the
 standard kcd JSON envelope:
 
   kcd analyze sch     <project>   → analyze_schematic.py

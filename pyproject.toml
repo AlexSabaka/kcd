@@ -49,18 +49,18 @@ Repository = "https://github.com/AlexSabaka/kcd"
 Issues = "https://github.com/AlexSabaka/kcd/issues"
 
 [tool.hatch.build.targets.wheel]
+# The vendored kicad-happy analyzer engine lives at `src/kcd/analyzers/`, so
+# it ships inside the wheel natively as part of the `kcd` package — no
+# force-include needed. `skills/kicad/` (SKILL.md + references) is skill
+# content consumed by the agent skill system, not the kcd runtime, so it is
+# intentionally not bundled into the Python wheel.
 packages = ["src/kcd", "src/kcd_mcp"]
-
-# Ship the vendored kicad-happy skill (scripts + references + SKILL.md) inside
-# the wheel under `kcd/skills/` so `kcd.adapters.analyzers._locate_scripts_dir()`
-# can find the analyzers at runtime regardless of install style. The source-tree
-# layout (`skills/` at repo root) is preserved unchanged for development.
-[tool.hatch.build.targets.wheel.force-include]
-"skills" = "kcd/skills"
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Vendored third-party analyzer engine — not kcd's own code, not linted.
+extend-exclude = ["src/kcd/analyzers"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
