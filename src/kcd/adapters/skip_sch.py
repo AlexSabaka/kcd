@@ -372,6 +372,102 @@ def swap_symbol(
     }
 
 
+def rename_net(
+    sch_path: Path,
+    old: str,
+    new: str,
+    power_definition: list | None = None,
+) -> dict[str, Any]:
+    """Rename net `old` to `new` on one schematic sheet (raw S-expr).
+
+    Renames every net-name carrier: local labels, global labels, and power
+    symbols. A power symbol carries its net name in *both* its `Value` and
+    its `lib_id` (`power:<name>`) — renaming only `Value` leaves a stale
+    `lib_id` that a library resync reverts (field-report friction #4), so we
+    repoint the `lib_id` and embed a matching `lib_symbols` entry.
+
+    `power_definition` is the `power:<new>` library definition (from
+    `symbol_lib.find_symbol`) when one exists; when None, the entry is
+    derived from the schematic's embedded `power:<old>` definition.
+
+    Raises:
+        LookupError: no label, global label, or power symbol names `old` —
+            the envelope classifies this as ``not_found``.
+        SchEditError: a power symbol named `old` but no definition (neither
+            passed nor embedded) is available to build the renamed entry.
+    """
+    tree = sexp.parse(sch_path.read_text())
+    n_local = n_global = 0
+    power_refs: list[str] = []
+    old_power_lib_id: str | None = None
+
+    for node in tree:
+        if not isinstance(node, list) or not node:
+            continue
+        head = node[0]
+        if head == "label" and len(node) >= 2 and str(node[1]) == old:
+            node[1] = sexp.Quoted(new)
+            n_local += 1
+        elif head == "global_label" and len(node) >= 2 and str(node[1]) == old:
+            node[1] = sexp.Quoted(new)
+            n_global += 1
+        elif head == "symbol":
+            lib_id_node = _sexp_child(node, "lib_id")
+            if lib_id_node is None or len(lib_id_node) < 2:
+                continue
+            lib_id = str(lib_id_node[1])
+            if not lib_id.startswith("power:"):
+                continue
+            val_node = _sexp_value_property(node)
+            if val_node is None or len(val_node) < 3 or str(val_node[2]) != old:
+                continue
+            lib_id_node[1] = sexp.Quoted("power:" + new)
+            val_node[2] = sexp.Quoted(new)
+            power_refs.append(_sexp_symbol_reference(node) or "?")
+            old_power_lib_id = lib_id
+
+    if not (n_local or n_global or power_refs):
+        raise LookupError(f"No net named {old!r} found in {sch_path.name}")
+
+    definition_source: str | None = None
+    if power_refs:
+        new_lib_id = "power:" + new
+        lib_symbols = _sexp_child(tree, "lib_symbols")
+        if lib_symbols is None:
+            raise SchEditError(f"{sch_path.name} has no lib_symbols block")
+        if _sexp_has_symbol(lib_symbols, new_lib_id):
+            definition_source = "existing"
+        else:
+            if power_definition is not None:
+                entry = copy.deepcopy(power_definition)
+                definition_source = "library"
+            else:
+                template = _sexp_lib_symbol(lib_symbols, old_power_lib_id or "")
+                if template is None:
+                    raise SchEditError(
+                        f"{sch_path.name} has no embedded {old_power_lib_id!r} "
+                        "definition to derive the renamed power symbol from"
+                    )
+                entry = copy.deepcopy(template)
+                definition_source = "derived"
+            entry[1] = sexp.Quoted(new_lib_id)
+            _patch_lib_symbol_value(entry, new)
+            lib_symbols.append(entry)
+
+    sch_path.write_text(sexp.dumps(tree))
+    return {
+        "old": old,
+        "new": new,
+        "labels": n_local,
+        "global_labels": n_global,
+        "power_symbols": power_refs,
+        "power_lib_id": (
+            {"from": old_power_lib_id, "to": "power:" + new} if power_refs else None
+        ),
+        "power_definition_source": definition_source,
+    }
+
+
 def symbol_pin_geometry(sch_path: Path, ref: str) -> dict[str, Any]:
     """Pin numbers and world positions for symbol `ref` (via kicad-skip).
 
@@ -576,13 +672,22 @@ def list_nets(sch_path: Path) -> list[dict[str, Any]]:
         name = glabel.value if hasattr(glabel, "value") else str(glabel)
         out.setdefault(name, {"name": name, "kind": "global", "count": 0})
         out[name]["count"] += 1
-    for power in getattr(sch, "power", []) or []:
+    # Power nets: kicad-skip has no `sch.power` collection — power symbols
+    # live in `sch.symbol` like any other, identified by a `power:` lib_id.
+    # The net name is the symbol's Value.
+    for sym in getattr(sch, "symbol", []) or []:
         try:
-            name = power.property.Value.value
-            out.setdefault(name, {"name": name, "kind": "power", "count": 0})
-            out[name]["count"] += 1
+            lib_id = str(sym.lib_id.value)
+        except (AttributeError, TypeError):
+            continue
+        if not lib_id.startswith("power:"):
+            continue
+        try:
+            name = sym.property.Value.value
         except Exception:
             continue
+        out.setdefault(name, {"name": name, "kind": "power", "count": 0})
+        out[name]["count"] += 1
     return list(out.values())
 
 
@@ -730,6 +835,43 @@ def _sexp_has_symbol(lib_symbols: list, lib_id: str) -> bool:
         ):
             return True
     return False
+
+
+def _sexp_lib_symbol(lib_symbols: list, lib_id: str) -> list | None:
+    """The `(symbol "<lib_id>" ...)` entry in a `lib_symbols` block, or None."""
+    for child in lib_symbols:
+        if (
+            isinstance(child, list)
+            and len(child) >= 2
+            and child[0] == "symbol"
+            and child[1] == lib_id
+        ):
+            return child
+    return None
+
+
+def _sexp_value_property(symbol_node: list) -> list | None:
+    """The `(property "Value" ...)` child of a `(symbol ...)` node.
+
+    Works for both a placed instance and a `lib_symbols` definition — both
+    carry the Value as a direct `property` child.
+    """
+    for child in symbol_node:
+        if (
+            isinstance(child, list)
+            and len(child) >= 3
+            and child[0] == "property"
+            and child[1] == "Value"
+        ):
+            return child
+    return None
+
+
+def _patch_lib_symbol_value(def_node: list, value: str) -> None:
+    """Set the `(property "Value" ...)` of a `lib_symbols` definition node."""
+    val = _sexp_value_property(def_node)
+    if val is not None and len(val) >= 3:
+        val[2] = sexp.Quoted(value)
 
 
 def _sexp_symbol_reference(symbol_node: list) -> str | None:

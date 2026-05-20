@@ -23,6 +23,13 @@ Initial alpha release.
   changes the `lib_id`, embeds the new definition, rewrites the pin
   entries. Requires `--pin-map` when the pin sets differ, and warns about
   wires the swap leaves dangling (kcd does not reroute)
+- `kcd edit net` — rename a net across the schematic: relabels local and
+  global labels and, for a power net, repoints the power symbol's `lib_id`
+  to `power:<new>` alongside its `Value` so the rename survives a library
+  resync (field-report friction #4 — a Value-only rename is silently
+  reverted by "Update Symbols from Library"). Root sheet only; after the
+  rename it checks the live PCB for the stale old net name and instructs
+  F8 / `kcd sync` (KiCad 10 exposes no headless forward annotation)
 - `kcd edit move-fp` — PCB footprint move via kipy IPC
 - `kcd net list|pcb|of|trace` — net queries: `net list` names schematic
   nets, `net pcb` lists board nets with pad/track counts, `net of` returns
@@ -60,6 +67,10 @@ Initial alpha release.
   project name + `.kicad_sch`), matching the board entry's shape. The
   hierarchy info is preserved in a new `sheet_path` field on schematic
   entries. Dove session-5 close.
+- `kcd net list` now reports power nets. `skip_sch.list_nets` scanned a
+  non-existent `sch.power` collection; kicad-skip keeps power symbols in
+  `sch.symbol` with a `power:` lib_id, so power nets were silently omitted
+  despite the command's docstring promising them.
 
 ### Known limitations
 - Diff-pair length tuning: not implemented

@@ -468,6 +468,127 @@ def swap_symbol(
 
 
 # ---------------------------------------------------------------------------
+# Net rename — labels + global labels + power symbols (lib_id-aware)
+# ---------------------------------------------------------------------------
+
+@edit_app.command("net")
+def rename_net(
+    project: str = typer.Argument(...),
+    old: str = typer.Option(..., "--from", help="Current net name"),
+    new: str = typer.Option(..., "--to", help="New net name"),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Rename a net across the schematic — labels, global labels, power symbols.
+
+    A power net is renamed lib_id-aware: the power symbol's `lib_id` is
+    repointed to `power:<new>` alongside its `Value`, so the rename survives a
+    library resync. Without this, KiCad's "Update Symbols from Library"
+    silently reverts a Value-only rename.
+
+    Scope: the root sheet only. A net carried by global labels on sub-sheets
+    is renamed on the root only — a warning flags any sub-sheet carriers.
+
+    The PCB is not renamed: KiCad 10 exposes no headless forward annotation.
+    After the rename the command checks the live board (when KiCad is open)
+    and reports whether the old net name is still there — run F8 (Update PCB
+    from Schematic), or `kcd sync`, to push the change to the board.
+    """
+    with run_command("edit.net", json_) as r:
+        proj = resolve(project)
+        nets = skip_sch.list_nets(proj.sch)
+        names = {n["name"] for n in nets}
+        if old not in names:
+            raise CommandError(
+                "not_found",
+                f"No net named {old!r} on the root sheet of {proj.name}.",
+            )
+        merges = new in names
+
+        # Sub-sheet carriers — the rename is root-only, so flag them precisely.
+        offsheet: list[str] = []
+        for entry in skip_sch.sheet_index(proj):
+            path = entry["file"]
+            if path is None or path == proj.sch:
+                continue
+            try:
+                if any(n["name"] == old for n in skip_sch.list_nets(path)):
+                    offsheet.append(entry["name"] or path.name)
+            except Exception:
+                continue
+
+        is_power = any(
+            n["name"] == old and n["kind"] == "power" for n in nets
+        )
+        power_def = None
+        if is_power:
+            try:
+                power_def = symbol_lib.find_symbol(f"power:{new}", proj)["definition"]
+            except (CommandError, FileNotFoundError, LookupError):
+                power_def = None
+
+        _, r.snapshot_before = _pre_edit(
+            project, f"rename net {old} -> {new}", no_snapshot
+        )
+        mtimes = skip_sch.snapshot_sheet_mtimes(proj)
+        renamed = skip_sch.rename_net(proj.sch, old, new, power_def)
+        r.data = {"renamed": renamed}
+
+        if merges:
+            r.warn(
+                f"{new!r} already names a net — this rename merges {old!r} "
+                "into it."
+            )
+        if renamed["power_definition_source"] == "derived":
+            r.warn(
+                f"power:{new} is not a stock library symbol; embedded a "
+                "derived definition — KiCad may flag it as out-of-sync with "
+                "the library on the next 'Update Symbols from Library'."
+            )
+        if offsheet:
+            r.warn(
+                f"{old!r} also appears on sub-sheet(s) {', '.join(offsheet)} "
+                "— only the root sheet was renamed; rename those carriers "
+                "manually or the net splits."
+            )
+
+        # PCB drift check — read-only and fully defensive: the schematic
+        # rename already succeeded and is snapshotted, so nothing here may
+        # fail the command. kipy 0.7.1 cannot rename a PCB net; we only
+        # detect whether the old name still lives on the board.
+        from kcd.core.ipc import IpcUnavailable
+        try:
+            from kcd.adapters import kipy_pcb
+            kipy_pcb.assert_board_is(proj.pcb)
+            board_nets = kipy_pcb.board_net_names()
+            stale = old in board_nets
+            r.data["pcb"] = {
+                "checked": True,
+                "stale": stale,
+                "old_net_present": stale,
+                "new_net_present": new in board_nets,
+            }
+            if stale:
+                r.warn(
+                    f"The PCB still carries net {old!r} — kcd cannot "
+                    "forward-annotate headlessly. Run F8 (Update PCB from "
+                    "Schematic) in KiCad, or `kcd sync`, to push the rename."
+                )
+        except IpcUnavailable:
+            r.data["pcb"] = {"checked": False, "reason": "KiCad not open"}
+            r.warn(
+                "PCB drift check skipped — KiCad is not open. The board may "
+                "still carry the old net name; run `kcd sync` after opening it."
+            )
+        except Exception as e:
+            r.data["pcb"] = {"checked": False, "reason": str(e)}
+            r.warn(f"PCB drift check skipped: {e}")
+
+        _post_edit_sch(proj, r, mtimes, no_render=no_render)
+
+
+# ---------------------------------------------------------------------------
 # PCB edits via kipy IPC
 # ---------------------------------------------------------------------------
 

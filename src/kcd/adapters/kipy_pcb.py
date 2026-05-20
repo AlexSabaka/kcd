@@ -380,6 +380,21 @@ def list_pad_nets() -> list[dict[str, Any]]:
     return out
 
 
+def board_net_names() -> list[str]:
+    """Return the names of every net on the open board.
+
+    A lean read — no pad/track counting. Used by `edit net`'s post-rename
+    drift check to confirm whether the old net name still lives on the PCB
+    (kcd cannot forward-annotate headlessly, so a schematic rename leaves the
+    board stale until the user runs F8).
+    """
+    board = get_board()
+    try:
+        return [n.name for n in board.get_nets()]
+    except AttributeError:
+        return []
+
+
 def find_footprint(reference: str) -> dict[str, Any]:
     """Find a footprint by reference designator. Returns full info or raises."""
     board = get_board()
