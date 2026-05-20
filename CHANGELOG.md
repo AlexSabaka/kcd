@@ -98,6 +98,14 @@ Initial alpha release.
   non-existent `sch.power` collection; kicad-skip keeps power symbols in
   `sch.symbol` with a `power:` lib_id, so power nets were silently omitted
   despite the command's docstring promising them.
+- `kcd_mcp` MCP server now exposes the full CLI surface. The hand-written
+  server had drifted to a pre-roadmap 22-tool subset — every command from
+  Waves 1-7 (net queries, `sync`, `lib`, structural/copper/text edits,
+  design rules) plus `parity`, `analyze`, `route`, `render 3d` and
+  `export drill|pos` shipped in the CLI but was never wired into the MCP
+  layer, so MCP clients saw a frozen toolset. All 53 leaf commands are now
+  exposed; a new `tests/test_mcp_parity.py` drift guard fails the build if
+  the CLI and MCP tool sets ever diverge again.
 
 ### Known limitations
 - Diff-pair length tuning: not implemented

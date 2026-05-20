@@ -106,7 +106,10 @@ def kcd_snapshot_list(project: str) -> dict[str, Any]:
 
 @mcp.tool()
 def kcd_snapshot_restore(project: str, ref: str) -> dict[str, Any]:
-    """Hard-reset the project's working tree to a snapshot ref. Destructive within the project dir."""
+    """Hard-reset the project's working tree to a snapshot ref.
+
+    Destructive within the project directory.
+    """
     return _run(["snapshot", "restore", project, ref, "--yes"])
 
 
@@ -131,9 +134,10 @@ def kcd_inspect_sch(project: str) -> dict[str, Any]:
 
 @mcp.tool()
 def kcd_inspect_pcb(project: str | None = None) -> dict[str, Any]:
-    """List all footprints on the PCB. Requires KiCad open with the .kicad_pcb file and IPC API enabled.
+    """List all footprints on the PCB. Requires KiCad open with the .kicad_pcb.
 
-    If `project` is omitted, kcd auto-detects from the currently-open board.
+    Needs KiCad's IPC API enabled. If `project` is omitted, kcd auto-detects
+    from the currently-open board.
     """
     args = ["inspect", "pcb"]
     if project:
@@ -143,7 +147,10 @@ def kcd_inspect_pcb(project: str | None = None) -> dict[str, Any]:
 
 @mcp.tool()
 def kcd_inspect_ref(project: str, ref: str) -> dict[str, Any]:
-    """Look up a component by reference designator. Reads schematic; enriches with PCB info if KiCad is open."""
+    """Look up a component by reference designator.
+
+    Reads the schematic; enriches with PCB info if KiCad is open.
+    """
     return _run(["inspect", "ref", project, ref])
 
 
@@ -169,10 +176,11 @@ def kcd_edit_value(
     no_snapshot: bool = False,
     no_render: bool = False,
 ) -> dict[str, Any]:
-    """Change a symbol's Value field in the schematic. Auto-snapshots and auto-renders by default.
+    """Change a symbol's Value field in the schematic.
 
-    Set `no_snapshot=True` to skip the pre-edit snapshot (useful when the snapshot store is misbehaving).
-    Set `no_render=True` to skip the post-edit SVG re-render (faster batch edits).
+    Auto-snapshots and auto-renders by default. Set `no_snapshot=True` to skip
+    the pre-edit snapshot; `no_render=True` skips the post-edit SVG re-render
+    (faster batch edits).
     """
     return _run([
         "edit", "value", project, "--ref", ref, "--value", new_value,
@@ -240,6 +248,208 @@ def kcd_edit_delete(
     ])
 
 
+@mcp.tool()
+def kcd_edit_wire_add(
+    project: str,
+    from_xy: str,
+    to_xy: str,
+    no_snapshot: bool = False,
+    no_render: bool = False,
+) -> dict[str, Any]:
+    """Add a wire segment to the root schematic sheet between two points.
+
+    `from_xy` / `to_xy` are 'X,Y' millimetre coordinates, e.g. "100,50".
+    """
+    return _run([
+        "edit", "wire", "add", project, "--from", from_xy, "--to", to_xy,
+        *_edit_flags(no_snapshot, no_render),
+    ])
+
+
+@mcp.tool()
+def kcd_edit_wire_delete(
+    project: str,
+    from_xy: str,
+    to_xy: str,
+    no_snapshot: bool = False,
+    no_render: bool = False,
+) -> dict[str, Any]:
+    """Delete the wire with the given endpoints (either direction) from the root sheet.
+
+    `from_xy` / `to_xy` are 'X,Y' millimetre coordinates.
+    """
+    return _run([
+        "edit", "wire", "delete", project, "--from", from_xy, "--to", to_xy,
+        *_edit_flags(no_snapshot, no_render),
+    ])
+
+
+@mcp.tool()
+def kcd_edit_netlabel_add(
+    project: str,
+    text: str,
+    at: str,
+    rotation: float = 0.0,
+    is_global: bool = False,
+    no_snapshot: bool = False,
+    no_render: bool = False,
+) -> dict[str, Any]:
+    """Add a local or global net label on the root schematic sheet.
+
+    `at` is an 'X,Y' millimetre coordinate. Set `is_global=True` for a global
+    label (default is a local label).
+    """
+    args = ["edit", "netlabel", "add", project, "--text", text, "--at", at,
+            "--rotation", str(rotation)]
+    if is_global:
+        args.append("--global")
+    return _run([*args, *_edit_flags(no_snapshot, no_render)])
+
+
+@mcp.tool()
+def kcd_edit_netlabel_delete(
+    project: str,
+    text: str,
+    at: str | None = None,
+    no_snapshot: bool = False,
+    no_render: bool = False,
+) -> dict[str, Any]:
+    """Delete a net label by text from the root schematic sheet.
+
+    Pass `at` ('X,Y' in mm) to disambiguate when several labels share the name.
+    """
+    args = ["edit", "netlabel", "delete", project, "--text", text]
+    if at:
+        args += ["--at", at]
+    return _run([*args, *_edit_flags(no_snapshot, no_render)])
+
+
+@mcp.tool()
+def kcd_edit_add_symbol(
+    project: str,
+    lib_id: str,
+    ref: str,
+    value: str | None = None,
+    at: str | None = None,
+    no_snapshot: bool = False,
+    no_render: bool = False,
+) -> dict[str, Any]:
+    """Add a component to the root schematic sheet.
+
+    `lib_id` is Library:Symbol (e.g. "Device:C"). If the project already has
+    that part type an existing instance is cloned; otherwise the symbol is
+    resolved from a library and embedded. `at` is an optional 'X,Y' in mm.
+    """
+    args = ["edit", "add-symbol", project, "--lib-id", lib_id, "--ref", ref]
+    if value is not None:
+        args += ["--value", value]
+    if at:
+        args += ["--at", at]
+    return _run([*args, *_edit_flags(no_snapshot, no_render)])
+
+
+@mcp.tool()
+def kcd_edit_symbol(
+    project: str,
+    ref: str,
+    to_lib_id: str,
+    pin_map: str | None = None,
+    no_snapshot: bool = False,
+    no_render: bool = False,
+) -> dict[str, Any]:
+    """Swap a placed symbol for a different library part.
+
+    `to_lib_id` is the new Library:Symbol. When the pin sets differ, pass
+    `pin_map` as "old=new,old=new" to confirm the remap. Wires the swap leaves
+    dangling are reported in the result's warnings (kcd does not reroute).
+    """
+    args = ["edit", "symbol", project, "--ref", ref, "--to-lib-id", to_lib_id]
+    if pin_map:
+        args += ["--pin-map", pin_map]
+    return _run([*args, *_edit_flags(no_snapshot, no_render)])
+
+
+@mcp.tool()
+def kcd_edit_net(
+    project: str,
+    old_name: str,
+    new_name: str,
+    no_snapshot: bool = False,
+    no_render: bool = False,
+) -> dict[str, Any]:
+    """Rename a net across the schematic — labels, global labels, power symbols.
+
+    Power nets are renamed lib_id-aware (the power symbol's lib_id is repointed
+    to power:<new> so the rename survives a library resync). Root sheet only.
+    The PCB is not renamed — KiCad 10 has no headless forward annotation; the
+    result reports whether the board still carries the old net name.
+    """
+    return _run([
+        "edit", "net", project, "--from", old_name, "--to", new_name,
+        *_edit_flags(no_snapshot, no_render),
+    ])
+
+
+@mcp.tool()
+def kcd_edit_text_titleblock(
+    project: str,
+    field: str,
+    value: str,
+    no_snapshot: bool = False,
+    no_render: bool = False,
+) -> dict[str, Any]:
+    """Set a title-block field on the root schematic sheet.
+
+    `field` is one of title, company, rev, date, or comment1..comment9. The
+    title block is created if the sheet has none.
+    """
+    return _run([
+        "edit", "text", "titleblock", project, "--field", field,
+        "--value", value, *_edit_flags(no_snapshot, no_render),
+    ])
+
+
+@mcp.tool()
+def kcd_edit_text_set(
+    project: str,
+    match: str,
+    to: str,
+    at: str | None = None,
+    no_snapshot: bool = False,
+    no_render: bool = False,
+) -> dict[str, Any]:
+    """Replace a free graphic text item on the root schematic sheet.
+
+    Matches a (text ...) annotation by its current string `match`; pass `at`
+    ('X,Y' in mm) to disambiguate when several share the text. Net labels are
+    not affected — use kcd_edit_netlabel_* / kcd_edit_net for those.
+    """
+    args = ["edit", "text", "set", project, "--match", match, "--to", to]
+    if at:
+        args += ["--at", at]
+    return _run([*args, *_edit_flags(no_snapshot, no_render)])
+
+
+@mcp.tool()
+def kcd_edit_designrules(
+    project: str,
+    rule: str,
+    value: str,
+    no_snapshot: bool = False,
+) -> dict[str, Any]:
+    """Set a board design-rule constraint in the .kicad_pro file.
+
+    `rule` is a board.design_settings.rules key (e.g. min_track_width,
+    min_clearance, min_via_diameter); `value` is mm for distances, true/false
+    for flags. Call with an unknown rule to see the valid keys. Note: if KiCad
+    has the project open it may overwrite this on its next save.
+    """
+    args = ["edit", "designrules", project, "--rule", rule, "--value", value]
+    if no_snapshot:
+        args.append("--no-snapshot")
+    return _run(args)
+
+
 # ---------------------------------------------------------------------------
 # edit (PCB — requires KiCad open via IPC)
 # ---------------------------------------------------------------------------
@@ -271,13 +481,239 @@ def kcd_edit_move_fp(
     return _run(args)
 
 
+@mcp.tool()
+def kcd_edit_track_delete(
+    net: str | None = None,
+    from_xy: str | None = None,
+    to_xy: str | None = None,
+    layer: str | None = None,
+    project: str | None = None,
+    no_snapshot: bool = False,
+) -> dict[str, Any]:
+    """Delete copper tracks on the PCB. Requires KiCad open with the PCB editor.
+
+    Select a whole net with `net`, or one segment with `from_xy`/`to_xy`
+    ('X,Y' in mm, either direction); `layer` (e.g. "F.Cu") narrows either.
+    Calls board.save() — persists any unsaved PCB-editor changes too.
+    """
+    args = ["edit", "track", "delete"]
+    if project:
+        args.append(project)
+    if net:
+        args += ["--net", net]
+    if from_xy:
+        args += ["--from", from_xy]
+    if to_xy:
+        args += ["--to", to_xy]
+    if layer:
+        args += ["--layer", layer]
+    if no_snapshot:
+        args.append("--no-snapshot")
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_edit_track_modify(
+    width: float | None = None,
+    set_layer: str | None = None,
+    set_net: str | None = None,
+    net: str | None = None,
+    from_xy: str | None = None,
+    to_xy: str | None = None,
+    layer: str | None = None,
+    project: str | None = None,
+    no_snapshot: bool = False,
+) -> dict[str, Any]:
+    """Modify copper tracks on the PCB — width, layer, or net assignment.
+
+    Selection (`net` / `from_xy`+`to_xy` / `layer`) is separate from the
+    changes (`width` in mm / `set_layer` / `set_net`); pass at least one of
+    each. Requires KiCad open with the PCB editor; calls board.save().
+    """
+    args = ["edit", "track", "modify"]
+    if project:
+        args.append(project)
+    if net:
+        args += ["--net", net]
+    if from_xy:
+        args += ["--from", from_xy]
+    if to_xy:
+        args += ["--to", to_xy]
+    if layer:
+        args += ["--layer", layer]
+    if width is not None:
+        args += ["--width", str(width)]
+    if set_layer:
+        args += ["--set-layer", set_layer]
+    if set_net:
+        args += ["--set-net", set_net]
+    if no_snapshot:
+        args.append("--no-snapshot")
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_edit_via_add(
+    net: str,
+    at: str,
+    diameter: float = 0.6,
+    drill: float = 0.3,
+    project: str | None = None,
+    no_snapshot: bool = False,
+) -> dict[str, Any]:
+    """Add a through-via to the PCB. Requires KiCad open with the PCB editor.
+
+    `at` is an 'X,Y' millimetre coordinate. `diameter` / `drill` are in mm
+    (defaults 0.6 / 0.3). Blind/buried vias are not supported. Calls
+    board.save() — persists any unsaved PCB-editor changes too.
+    """
+    args = ["edit", "via", "add"]
+    if project:
+        args.append(project)
+    args += ["--net", net, "--at", at,
+             "--diameter", str(diameter), "--drill", str(drill)]
+    if no_snapshot:
+        args.append("--no-snapshot")
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_edit_zone_add(
+    net: str,
+    layer: str,
+    rect: str,
+    priority: int = 0,
+    clearance: float | None = None,
+    project: str | None = None,
+    no_snapshot: bool = False,
+) -> dict[str, Any]:
+    """Add a rectangular copper-pour zone to the PCB.
+
+    `rect` is the corner rectangle 'x1,y1,x2,y2' in mm; `layer` e.g. "F.Cu".
+    `clearance` (mm) is an optional local clearance. Requires KiCad open with
+    the PCB editor; KiCad refills all zones. Calls board.save().
+    """
+    args = ["edit", "zone", "add"]
+    if project:
+        args.append(project)
+    args += ["--net", net, "--layer", layer, "--rect", rect,
+             "--priority", str(priority)]
+    if clearance is not None:
+        args += ["--clearance", str(clearance)]
+    if no_snapshot:
+        args.append("--no-snapshot")
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_edit_zone_delete(
+    net: str | None = None,
+    layer: str | None = None,
+    project: str | None = None,
+    no_snapshot: bool = False,
+) -> dict[str, Any]:
+    """Delete copper zones from the PCB. Requires KiCad open with the PCB editor.
+
+    Zones have no endpoints — select by `net` and/or `layer` (at least one).
+    Calls board.save() — persists any unsaved PCB-editor changes too.
+    """
+    args = ["edit", "zone", "delete"]
+    if project:
+        args.append(project)
+    if net:
+        args += ["--net", net]
+    if layer:
+        args += ["--layer", layer]
+    if no_snapshot:
+        args.append("--no-snapshot")
+    return _run(args)
+
+
+# ---------------------------------------------------------------------------
+# net (connectivity queries)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def kcd_net_list(project: str) -> dict[str, Any]:
+    """List all named nets (labels, global labels, power) in the schematic. Offline."""
+    return _run(["net", "list", project])
+
+
+@mcp.tool()
+def kcd_net_pcb(project: str | None = None) -> dict[str, Any]:
+    """List nets present on the PCB. Requires KiCad open with the .kicad_pcb.
+
+    If `project` is omitted, kcd auto-detects from the currently-open board.
+    """
+    args = ["net", "pcb"]
+    if project:
+        args.append(project)
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_net_of(net: str, project: str | None = None) -> dict[str, Any]:
+    """List everything on a net on the PCB — pads, tracks, vias, zones.
+
+    Answers "what is on net X" for the board. Requires KiCad open with the
+    .kicad_pcb. For the schematic-side answer use kcd_net_trace.
+    """
+    args = ["net", "of"]
+    if project:
+        args.append(project)
+    args += ["--net", net]
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_net_trace(project: str, net: str) -> dict[str, Any]:
+    """Trace a net through the schematic — the component pins on it. Offline.
+
+    Resolves label / global-label nets to symbol pins. For PCB-side membership,
+    and for power nets, use kcd_net_of.
+    """
+    return _run(["net", "trace", project, "--net", net])
+
+
+# ---------------------------------------------------------------------------
+# lib (symbol-library inspection)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def kcd_lib_show(lib_id: str, project: str | None = None) -> dict[str, Any]:
+    """Resolve a symbol and show its pins, properties, and source library file.
+
+    `lib_id` is Library:Symbol (e.g. "Device:R"). `project` is needed only for
+    project-local libraries.
+    """
+    args = ["lib", "show", lib_id]
+    if project:
+        args += ["--project", project]
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_lib_list(project: str | None = None) -> dict[str, Any]:
+    """List the symbol libraries kcd can resolve.
+
+    Pass `project` to also include its sym-lib-table.
+    """
+    args = ["lib", "list"]
+    if project:
+        args += ["--project", project]
+    return _run(args)
+
+
 # ---------------------------------------------------------------------------
 # render
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
 def kcd_render_sch(project: str, out: str, fmt: str = "svg") -> dict[str, Any]:
-    """Render the schematic to a file. fmt: svg | png | pdf. PNG needs rsvg-convert or inkscape on PATH."""
+    """Render the schematic to a file. fmt: svg | png | pdf.
+
+    PNG rasterization needs rsvg-convert or inkscape on PATH.
+    """
     return _run(["render", "sch", project, "--out", out, "--format", fmt])
 
 
@@ -285,6 +721,15 @@ def kcd_render_sch(project: str, out: str, fmt: str = "svg") -> dict[str, Any]:
 def kcd_render_pcb(project: str, out: str, fmt: str = "svg") -> dict[str, Any]:
     """Render the PCB to a file. fmt: svg | pdf."""
     return _run(["render", "pcb", project, "--out", out, "--format", fmt])
+
+
+@mcp.tool()
+def kcd_render_3d(project: str, out: str, side: str = "top") -> dict[str, Any]:
+    """Render a photorealistic 3D image of the PCB to a file.
+
+    `side`: top | bottom | front | back | left | right.
+    """
+    return _run(["render", "3d", project, "--out", out, "--side", side])
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +746,130 @@ def kcd_drc(project: str) -> dict[str, Any]:
 def kcd_erc(project: str) -> dict[str, Any]:
     """Run Electrical Rule Check on the schematic and return the report."""
     return _run(["erc", project])
+
+
+@mcp.tool()
+def kcd_parity(project: str) -> dict[str, Any]:
+    """Diff the schematic against the PCB — references on one side only, plus
+    value / footprint mismatches on the intersection.
+
+    Requires KiCad open with the .kicad_pcb for PCB-side data; degrades to a
+    schematic-only listing with a warning if IPC is unavailable.
+    """
+    return _run(["parity", project])
+
+
+@mcp.tool()
+def kcd_sync(project: str, check: bool = False, out: str | None = None) -> dict[str, Any]:
+    """Export the schematic netlist and (with check=True) report PCB drift.
+
+    `sync` works offline and emits the netlist plus instructions for KiCad's
+    F8 "Update PCB from Schematic" (kcd cannot push headlessly). `check=True`
+    additionally diffs the netlist against the live PCB — components to
+    add/remove and net-membership changes — and needs KiCad open.
+    """
+    args = ["sync", project]
+    if check:
+        args.append("--check")
+    if out:
+        args += ["--out", out]
+    return _run(args)
+
+
+# ---------------------------------------------------------------------------
+# analyze (knowledge-layer, read-only)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def kcd_analyze_sch(project: str, out: str | None = None) -> dict[str, Any]:
+    """Analyze the schematic — components, BOM, nets, rails, filters,
+    regulators, decoupling adequacy, validation findings. Read-only, offline.
+
+    High-severity findings surface in the envelope warnings; raw JSON is saved
+    as an artifact (override the path with `out`).
+    """
+    args = ["analyze", "sch", project]
+    if out:
+        args += ["--out", out]
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_analyze_pcb(project: str, out: str | None = None) -> dict[str, Any]:
+    """Analyze the PCB — footprints, layers, nets, tracks, vias, decoupling
+    placement, ground domains, DFM summary. Read-only; does NOT need KiCad open.
+    """
+    args = ["analyze", "pcb", project]
+    if out:
+        args += ["--out", out]
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_analyze_gerbers(directory: str, out: str | None = None) -> dict[str, Any]:
+    """Analyze a directory of gerber + drill files for manufacturability.
+
+    `directory` is a gerber output directory (e.g. from kcd_export_gerber).
+    """
+    args = ["analyze", "gerbers", directory]
+    if out:
+        args += ["--out", out]
+    return _run(args)
+
+
+# ---------------------------------------------------------------------------
+# route
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def kcd_route_track(
+    net: str,
+    from_xy: str,
+    to_xy: str,
+    layer: str = "F.Cu",
+    width: float = 0.25,
+    project: str | None = None,
+    no_snapshot: bool = False,
+) -> dict[str, Any]:
+    """Add a single straight copper track between two points. Requires KiCad
+    open with the PCB editor.
+
+    `from_xy` / `to_xy` are 'X,Y' millimetre coordinates; `width` is in mm.
+    """
+    args = ["route", "track"]
+    if project:
+        args.append(project)
+    args += ["--net", net, "--from", from_xy, "--to", to_xy,
+             "--layer", layer, "--width", str(width)]
+    if no_snapshot:
+        args.append("--no-snapshot")
+    return _run(args)
+
+
+@mcp.tool()
+def kcd_route_freeroute(
+    project: str,
+    dsn: str | None = None,
+    out_ses: str | None = None,
+    passes: int = 100,
+    opt_passes: int = 20,
+    timeout: int = 600,
+) -> dict[str, Any]:
+    """Autoroute a board with FreeRouting via a .dsn -> .ses round-trip.
+
+    Requires a FreeRouting JAR (KCD_FREEROUTING_JAR env var) and a Specctra
+    .dsn exported from KiCad. `dsn` / `out_ses` default to <project>.dsn /
+    <project>.ses next to the project. Import the resulting .ses back into
+    KiCad manually (File -> Import -> Specctra Session).
+    """
+    args = ["route", "freeroute", project]
+    if dsn:
+        args += ["--dsn", dsn]
+    if out_ses:
+        args += ["--out-ses", out_ses]
+    args += ["--passes", str(passes), "--opt-passes", str(opt_passes),
+             "--timeout", str(timeout)]
+    return _run(args)
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +898,18 @@ def kcd_export_step(project: str, out: str) -> dict[str, Any]:
 def kcd_export_pdf(project: str, out: str, target: str = "pcb") -> dict[str, Any]:
     """Export PDF. target: pcb | sch."""
     return _run(["export", "pdf", project, "--out", out, "--target", target])
+
+
+@mcp.tool()
+def kcd_export_drill(project: str, out: str) -> dict[str, Any]:
+    """Export drill files to a directory."""
+    return _run(["export", "drill", project, "--out", out])
+
+
+@mcp.tool()
+def kcd_export_pos(project: str, out: str) -> dict[str, Any]:
+    """Export the pick-and-place position file."""
+    return _run(["export", "pos", project, "--out", out])
 
 
 def main() -> None:
