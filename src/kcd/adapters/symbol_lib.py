@@ -99,22 +99,62 @@ def find_symbol(lib_id: str, proj: Project | None = None) -> dict[str, Any]:
 
 
 def list_libraries(proj: Project | None = None) -> list[dict[str, str]]:
-    """List available symbol libraries as `[{nickname, path}]`, sorted.
+    """List available symbol libraries as `[{nickname, path, location}]`, sorted.
 
-    The standard symbol directory plus, when `proj` is given, the entries of
-    its `sym-lib-table` (project entries override a same-nickname standard one).
+    `location` is `standard` (KiCad's symbol directory), `project` (the
+    project's `sym-lib-table`), or `embedded` (a library used only via the
+    schematic's in-file `lib_symbols` block — invisible to the standard
+    resolution path but real). Project entries override a same-nickname
+    standard one.
     """
     libs: dict[str, str] = {}
+    location: dict[str, str] = {}
     symbol_dir = cfg_mod.load().symbol_dir
     if symbol_dir is not None and symbol_dir.is_dir():
         for f in sorted(symbol_dir.glob("*.kicad_sym")):
             libs[f.stem] = str(f)
+            location[f.stem] = "standard"
     if proj is not None:
         table = proj.root / "sym-lib-table"
         if table.is_file():
             for nickname, uri in _lib_table_entries(table):
                 libs[nickname] = str(_expand_uri(uri, proj))
-    return [{"nickname": k, "path": v} for k, v in sorted(libs.items())]
+                location[nickname] = "project"
+        for nickname in _embedded_lib_nicknames(proj):
+            if nickname not in libs:
+                libs[nickname] = "<embedded in schematic>"
+                location[nickname] = "embedded"
+    return [
+        {"nickname": k, "path": v, "location": location.get(k, "standard")}
+        for k, v in sorted(libs.items())
+    ]
+
+
+def _embedded_lib_nicknames(proj: Project) -> set[str]:
+    """Library nicknames that appear only in the schematic's `lib_symbols`.
+
+    A `.kicad_sch` carries a `(lib_symbols ...)` block with a full symbol
+    definition for every placed part, keyed by `lib_id`. A project-local
+    library not registered in `sym-lib-table` is invisible to the standard
+    resolution path but still surfaces here.
+    """
+    nicknames: set[str] = set()
+    if not proj.sch.is_file():
+        return nicknames
+    try:
+        tree = sexp.parse(proj.sch.read_text())
+    except (OSError, ValueError):
+        return nicknames
+    for node in tree:
+        if isinstance(node, list) and node and node[0] == "lib_symbols":
+            for child in node:
+                if (
+                    isinstance(child, list) and len(child) >= 2
+                    and child[0] == "symbol"
+                    and isinstance(child[1], str) and ":" in child[1]
+                ):
+                    nicknames.add(child[1].split(":")[0])
+    return nicknames
 
 
 # ---------------------------------------------------------------------------

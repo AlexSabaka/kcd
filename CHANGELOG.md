@@ -208,6 +208,20 @@ Initial alpha release.
   SnapEDA-sourced parts undercounted MPN coverage to zero. Both aliases
   added (a local patch to the vendored analyzer engine). Round-3 field
   report B7.
+- `kcd inspect ref` flags part-identity incoherence. The `consistency`
+  block only compared schematic vs PCB; it now also carries
+  `consistency.part_identity` — a conservative check that a component's own
+  value, symbol lib_id, and datasheet agree (it catches a part labeled
+  "AP2112K-3.3" on an NCP1117 symbol with an NCP1117 datasheet). It fires
+  only when the value and the symbol name both carry a real part-number
+  family that differ, so passives and generic symbols never
+  false-positive. Round-3 field report B8.
+- `kcd lib list` surfaces project-embedded symbol libraries. It listed only
+  the standard symbol directory and `sym-lib-table` entries; a library used
+  only via the schematic's in-file `lib_symbols` block (e.g. an embedded
+  vendor library) was invisible. Such libraries now appear with
+  `location: embedded`, and every entry gains a `location` field
+  (standard | project | embedded). Round-3 field report B10.
 
 ### Known limitations
 - Diff-pair length tuning: not implemented
@@ -215,3 +229,9 @@ Initial alpha release.
 - Schematic hierarchical net tracing: v1 stub only
 - Windows: untested
 - KiCad 9: not supported (use kicad-mcp or similar for v9)
+- `analyze pcb` `trust_summary.provenance_coverage_pct` can read 0.0 despite
+  topology evidence, and `statistics.track_count` can be null — internals
+  of the vendored analyzer engine (Round-3 field report B11/B12)
+- Schematic net counts differ across `sync` (netlist nets), `analyze` /
+  `fab-gate` (S-expr nets), and PCB (pad-touching nets) — three legitimate
+  definitions, not a drift bug (Round-3 field report B13)

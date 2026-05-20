@@ -115,7 +115,7 @@ kcd snapshot create|list|restore|diff <proj> [--json]
 
 # See
 kcd render sch <proj> --out <file> [--format svg|png|pdf] [--json]
-kcd render pcb <proj> --out <file> [--format svg|pdf] [--json]
+kcd render pcb <proj> --out <file> [--format svg|pdf|png] [--json]
 kcd render 3d  <proj> --out <file> [--side top|bottom] [--json]
 
 # Read
@@ -164,6 +164,8 @@ kcd drc    <proj> [--full] [--json]   # violations folded by (type,severity); --
 kcd erc    <proj> [--full] [--json]
 kcd parity <proj> [--json]                       # schematic ↔ PCB ref drift
 kcd sync   <proj> [--check] [--json]             # export netlist; --check diffs vs live PCB
+# Net counts legitimately differ across tools: `sync` counts netlist nets,
+# `analyze`/`fab-gate` count S-expr nets, PCB counts pad-touching nets.
 
 # Analyze (knowledge-layer; vendored kicad-happy engine at src/kcd/analyzers/, read-only)
 kcd analyze sch     <proj>        [--out <file>] [--json]

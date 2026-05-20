@@ -134,3 +134,32 @@ def test_lib_list_command(proj, monkeypatch) -> None:
     out = json.loads(result.stdout)
     assert out["data"]["count"] >= 1
     assert any(lib["nickname"] == "MyLib" for lib in out["data"]["libraries"])
+
+
+# ---------------------------------------------------------------------------
+# embedded-library detection (Round-3 field report B10)
+# ---------------------------------------------------------------------------
+
+def test_embedded_lib_nicknames_parses_lib_symbols(tmp_path: Path) -> None:
+    (tmp_path / "d.kicad_pro").write_text("{}")
+    (tmp_path / "d.kicad_sch").write_text(
+        '(kicad_sch (lib_symbols '
+        '(symbol "mx1508:MX1508") (symbol "Device:R")))'
+    )
+    proj = resolve(str(tmp_path))
+    assert symbol_lib._embedded_lib_nicknames(proj) == {"mx1508", "Device"}
+
+
+def test_list_libraries_includes_embedded_schematic_libs(tmp_path: Path) -> None:
+    """A project-local library used only via the schematic's in-file
+    `lib_symbols` block surfaces with `location: embedded`."""
+    (tmp_path / "demo.kicad_pro").write_text("{}")
+    (tmp_path / "demo.kicad_sch").write_text(
+        '(kicad_sch (lib_symbols '
+        '(symbol "mx1508:MX1508" (property "Reference" "U")) '
+        '(symbol "Device:R" (property "Reference" "R"))))'
+    )
+    proj = resolve(str(tmp_path))
+    by_nick = {lib["nickname"]: lib for lib in symbol_lib.list_libraries(proj)}
+    assert by_nick["mx1508"]["location"] == "embedded"
+    assert by_nick["mx1508"]["path"] == "<embedded in schematic>"

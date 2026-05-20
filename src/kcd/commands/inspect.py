@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import typer
 
 from kcd.adapters import skip_sch
@@ -92,6 +94,55 @@ def _check_consistency(sch_info: dict, pcb_info: dict | None) -> dict:
     }
 
 
+def _part_family(text: str | None) -> str | None:
+    """The 'letters then digits' core of a part number — its stable family.
+
+    `"AP2112K-3.3"` -> `"ap2112"`, `"NCP1117-3.3_SOT223"` -> `"ncp1117"`.
+    Returns None for anything not part-number-shaped (`"10k"`, `"100nF"`,
+    `"1N4148"` — digit-leading), so passives never trip the coherence check.
+    """
+    m = re.match(r"\s*([A-Za-z]{2,}\d{2,})", text or "")
+    return m.group(1).lower() if m else None
+
+
+def _check_part_identity_coherence(sch_info: dict) -> dict:
+    """Flag a component whose value, symbol, and datasheet disagree.
+
+    `_check_consistency` only compares schematic vs PCB. This catches a
+    *single-side* contradiction — e.g. value "AP2112K-3.3" on a symbol whose
+    lib_id is "NCP1117-3.3_SOT223" with an NCP1117 datasheet (Round-3 B8).
+
+    Deliberately conservative: it fires only when the value AND the symbol
+    name both carry a real part-number family and those families differ — so
+    a generic `Device:` symbol or a passive never produces a false positive.
+    """
+    value = sch_info.get("value") or ""
+    lib_id = sch_info.get("lib_id") or ""
+    datasheet = (sch_info.get("datasheet") or "").lower()
+    symbol_name = lib_id.split(":")[-1]
+
+    value_family = _part_family(value)
+    symbol_family = _part_family(symbol_name)
+    issues: list[str] = []
+
+    if value_family and symbol_family and value_family != symbol_family:
+        issues.append(
+            f"value {value!r} (family {value_family}) does not match the "
+            f"symbol {symbol_name!r} (family {symbol_family}) — the placed "
+            "part may be mislabeled or the wrong symbol"
+        )
+        # Datasheet corroboration: if it names the symbol's family but not
+        # the value's, the value is the odd one out.
+        if (datasheet and symbol_family in datasheet
+                and value_family not in datasheet):
+            issues.append(
+                f"datasheet corroborates the symbol family ({symbol_family}), "
+                f"not the value family ({value_family})"
+            )
+
+    return {"coherent": not issues, "issues": issues}
+
+
 @inspect_app.command("ref")
 def ref(
     project: str = typer.Argument(...),
@@ -122,11 +173,14 @@ def ref(
             )
 
         consistency = _check_consistency(sch_info, payload["pcb"])
+        consistency["part_identity"] = _check_part_identity_coherence(sch_info)
         payload["consistency"] = consistency
         # Mirror divergence notes into envelope `warnings` so clients that
         # don't unpack `data.consistency.notes` still see them.
         for note in consistency.get("notes", []):
             if consistency.get("pcb_available"):  # don't double-warn for "PCB unavailable"
                 r.warn(f"sch↔pcb: {note}")
+        for issue in consistency["part_identity"]["issues"]:
+            r.warn(f"part-identity: {issue}")
 
         r.data = payload
