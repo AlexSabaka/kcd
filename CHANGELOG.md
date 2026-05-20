@@ -8,6 +8,10 @@ Initial alpha release.
 - `kcd snapshot create|list|restore|diff` — git-backed per-project snapshots
 - `kcd render sch|pcb|3d` — schematic SVG/PDF/PNG, PCB SVG/PDF, 3D PNG render via kicad-cli
 - `kcd inspect sch|pcb|ref` — read-only inspection of design state
+- `kcd lib show|list` — symbol-library inspection: resolve a `Library:Symbol`
+  to its pins/properties/source `.kicad_sym`, or list the libraries kcd can
+  resolve (standard KiCad symbol dir + project `sym-lib-table`). Foundation
+  for the Wave 4/5 schematic-editing surface
 - `kcd edit value|ref|footprint|prop|delete` — offline schematic edits via kicad-skip
 - `kcd edit move-fp` — PCB footprint move via kipy IPC
 - `kcd net list|pcb|of|trace` — net queries: `net list` names schematic

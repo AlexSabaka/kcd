@@ -13,6 +13,7 @@ from kcd.commands.drc import drc_cmd, erc_cmd
 from kcd.commands.edit import edit_app
 from kcd.commands.export import export_app
 from kcd.commands.inspect import inspect_app
+from kcd.commands.lib import lib_app
 from kcd.commands.net import net_app
 from kcd.commands.parity import parity_cmd
 from kcd.commands.project import project_app
@@ -45,6 +46,7 @@ app.add_typer(render_app, name="render")
 app.add_typer(inspect_app, name="inspect")
 app.add_typer(edit_app, name="edit")
 app.add_typer(net_app, name="net")
+app.add_typer(lib_app, name="lib")
 app.add_typer(export_app, name="export")
 app.add_typer(route_app, name="route")
 app.add_typer(analyze_app, name="analyze")

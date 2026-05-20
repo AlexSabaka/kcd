@@ -43,6 +43,7 @@ Optional extras:
 kcd snapshot create|list|restore|diff
 kcd render   sch|pcb|3d
 kcd inspect  sch|pcb|ref
+kcd lib      show|list                       # symbol-library inspection
 kcd edit     value|ref|footprint|prop|delete|add-symbol|add-power
 kcd net      list|pcb|of|trace
 kcd analyze  sch|pcb|gerbers                # knowledge-layer (vendored kicad-happy)
