@@ -377,6 +377,96 @@ def add_symbol(
         _post_edit_sch(proj, r, mtimes, no_render=no_render)
 
 
+def _parse_pin_map(text: str) -> dict[str, str]:
+    """Parse a `'old=new,old=new'` pin map into a dict."""
+    result: dict[str, str] = {}
+    for entry in text.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if "=" not in entry:
+            raise CommandError(
+                "bad_pin_map", f"Expected 'old=new' pairs, got {entry!r}."
+            )
+        old, new = entry.split("=", 1)
+        result[old.strip()] = new.strip()
+    return result
+
+
+@edit_app.command("symbol")
+def swap_symbol(
+    project: str = typer.Argument(...),
+    ref: str = typer.Option(..., "--ref", help="Reference of the symbol to swap"),
+    to_lib_id: str = typer.Option(..., "--to-lib-id", help="New Library:Symbol"),
+    pin_map: str = typer.Option(
+        None, "--pin-map", help="old=new,... — required when the pin sets differ"
+    ),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Swap a symbol for a different library part.
+
+    When the new part's pin set differs from the old, --pin-map is required
+    so the change is explicit. Pin geometry changes, so wires may be left
+    dangling — those are reported in warnings (kcd does not reroute).
+    """
+    with run_command("edit.symbol", json_) as r:
+        proj = resolve(project)
+        if not any(
+            s.get("reference") == ref for s in skip_sch.list_symbols(proj.sch)
+        ):
+            raise CommandError("not_found", f"Symbol {ref!r} not found in the schematic.")
+
+        info = symbol_lib.find_symbol(to_lib_id, proj)
+        before = skip_sch.symbol_pin_geometry(proj.sch, ref)
+        old_pins = set(before["numbers"])
+        new_pins = {p["number"] for p in info["pins"]}
+
+        if old_pins != new_pins and not pin_map:
+            raise CommandError(
+                "pin_set_mismatch",
+                f"{ref}'s pins {sorted(old_pins)} differ from {to_lib_id}'s "
+                f"{sorted(new_pins)} — pass --pin-map (e.g. \"1=2,2=3\") to "
+                "confirm the swap.",
+            )
+        parsed_map: dict[str, str] = {}
+        if pin_map:
+            parsed_map = _parse_pin_map(pin_map)
+            bad_old = set(parsed_map) - old_pins
+            bad_new = set(parsed_map.values()) - new_pins
+            if bad_old or bad_new:
+                raise CommandError(
+                    "bad_pin_map",
+                    f"--pin-map references unknown pins (old: {sorted(bad_old)}, "
+                    f"new: {sorted(bad_new)}).",
+                )
+
+        wired_before = {tuple(p) for p in before["wired_positions"]}
+        _, r.snapshot_before = _pre_edit(
+            project, f"swap {ref} -> {to_lib_id}", no_snapshot
+        )
+        mtimes = skip_sch.snapshot_sheet_mtimes(proj)
+        result = skip_sch.swap_symbol(
+            proj.sch, ref, to_lib_id, info["definition"], info["pins"]
+        )
+
+        after = skip_sch.symbol_pin_geometry(proj.sch, ref)
+        dangling = sorted(wired_before - {tuple(p) for p in after["positions"]})
+        result["dangling_wires"] = [list(p) for p in dangling]
+        if parsed_map:
+            result["pin_map"] = parsed_map
+        r.data = {"swapped": result}
+        if dangling:
+            spots = ", ".join(f"{p[0]},{p[1]}" for p in dangling)
+            r.warn(
+                f"{len(dangling)} wire end(s) previously on {ref}'s pins no "
+                f"longer meet a pin after the swap — reconnect them (kcd does "
+                f"not reroute). At: {spots}"
+            )
+        _post_edit_sch(proj, r, mtimes, no_render=no_render)
+
+
 # ---------------------------------------------------------------------------
 # PCB edits via kipy IPC
 # ---------------------------------------------------------------------------

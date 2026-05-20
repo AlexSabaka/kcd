@@ -19,6 +19,10 @@ Initial alpha release.
 - `kcd edit add-symbol` — place a component on the root sheet: clones an
   existing instance when the project already has the part type, otherwise
   embeds the symbol definition from a library (Wave 3 resolution)
+- `kcd edit symbol` — swap a placed symbol for a different library part:
+  changes the `lib_id`, embeds the new definition, rewrites the pin
+  entries. Requires `--pin-map` when the pin sets differ, and warns about
+  wires the swap leaves dangling (kcd does not reroute)
 - `kcd edit move-fp` — PCB footprint move via kipy IPC
 - `kcd net list|pcb|of|trace` — net queries: `net list` names schematic
   nets, `net pcb` lists board nets with pad/track counts, `net of` returns

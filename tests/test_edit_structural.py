@@ -188,3 +188,68 @@ def test_add_symbol_unknown_part(proj: Path, monkeypatch) -> None:
     ])
     assert r.exit_code == 1
     assert json.loads(r.stdout)["error"]["code"] == "not_found"
+
+
+# ---------------------------------------------------------------------------
+# symbol swap
+# ---------------------------------------------------------------------------
+
+def test_swap_symbol_same_pinset(proj: Path, monkeypatch) -> None:
+    """Swap between parts with the same pin set — no --pin-map needed."""
+    monkeypatch.setenv("KCD_SYMBOL_DIR", str(_LIB_FIXTURE))
+    runner = CliRunner()
+    r = runner.invoke(edit_app, [
+        "symbol", str(proj), "--ref", "R1", "--to-lib-id", "mylib:R", *_OFFLINE,
+    ])
+    assert r.exit_code == 0, r.stdout
+    swapped = json.loads(r.stdout)["data"]["swapped"]
+    assert swapped["from_lib_id"] == "Device:R"
+    assert swapped["to_lib_id"] == "mylib:R"
+    assert hasattr(_sch(proj).lib_symbols, "mylib_R")
+
+
+def test_swap_symbol_pinset_mismatch_needs_map(proj: Path, monkeypatch) -> None:
+    """Differing pin sets without --pin-map → pin_set_mismatch error."""
+    monkeypatch.setenv("KCD_SYMBOL_DIR", str(_LIB_FIXTURE))
+    runner = CliRunner()
+    r = runner.invoke(edit_app, [
+        "symbol", str(proj), "--ref", "R1", "--to-lib-id", "mylib:Q_NPN", *_OFFLINE,
+    ])
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "pin_set_mismatch"
+
+
+def test_swap_symbol_with_map_flags_dangling(proj: Path, monkeypatch) -> None:
+    """A swap that moves a wired pin reports the dangling wire end."""
+    monkeypatch.setenv("KCD_SYMBOL_DIR", str(_LIB_FIXTURE))
+    runner = CliRunner()
+    r = runner.invoke(edit_app, [
+        "symbol", str(proj), "--ref", "R1", "--to-lib-id", "mylib:Q_NPN",
+        "--pin-map", "1=1,2=2", *_OFFLINE,
+    ])
+    assert r.exit_code == 0, r.stdout
+    out = json.loads(r.stdout)
+    # R1 pin 2 carried the SIGNAL wire; Q_NPN's pins sit elsewhere → dangling.
+    assert out["data"]["swapped"]["dangling_wires"]
+    assert any("dangle" in w or "no longer meet" in w for w in out["warnings"])
+
+
+def test_swap_symbol_not_found(proj: Path, monkeypatch) -> None:
+    monkeypatch.setenv("KCD_SYMBOL_DIR", str(_LIB_FIXTURE))
+    runner = CliRunner()
+    r = runner.invoke(edit_app, [
+        "symbol", str(proj), "--ref", "R99", "--to-lib-id", "mylib:R", *_OFFLINE,
+    ])
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "not_found"
+
+
+def test_swap_symbol_bad_pin_map(proj: Path, monkeypatch) -> None:
+    monkeypatch.setenv("KCD_SYMBOL_DIR", str(_LIB_FIXTURE))
+    runner = CliRunner()
+    r = runner.invoke(edit_app, [
+        "symbol", str(proj), "--ref", "R1", "--to-lib-id", "mylib:Q_NPN",
+        "--pin-map", "garbage", *_OFFLINE,
+    ])
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "bad_pin_map"

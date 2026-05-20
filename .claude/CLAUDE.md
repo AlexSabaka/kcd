@@ -144,6 +144,7 @@ kcd edit wire delete   <proj> --from X,Y --to X,Y [--json]
 kcd edit netlabel add  <proj> --text NET --at X,Y [--global] [--json]
 kcd edit netlabel delete <proj> --text NET [--at X,Y] [--json]
 kcd edit add-symbol    <proj> --lib-id Device:C --ref C5 [--value V] [--at X,Y] [--json]
+kcd edit symbol        <proj> --ref U1 --to-lib-id <lib:sym> [--pin-map "1=2,..."] [--json]
 
 # Change (PCB - needs KiCad open via IPC)
 kcd edit move-fp <proj> --ref R5 --x 100 --y 50 [--rotation 90] [--json]

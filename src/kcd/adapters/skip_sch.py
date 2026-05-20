@@ -321,6 +321,86 @@ def add_symbol_from_library(
     }
 
 
+def swap_symbol(
+    sch_path: Path,
+    ref: str,
+    new_lib_id: str,
+    new_definition: list,
+    new_pins: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Swap symbol `ref` to a different library symbol (raw S-expr).
+
+    Changes the instance's `lib_id`, embeds the new `lib_symbols` entry when
+    absent, and rewrites the instance's `(pin ...)` entries to the new
+    symbol's pin set. Does NOT move wires — the new symbol's pins sit at
+    different coordinates, so the caller should warn about wires the swap
+    leaves dangling.
+    """
+    tree = sexp.parse(sch_path.read_text())
+    instance = None
+    for node in tree:
+        if (
+            isinstance(node, list) and node and node[0] == "symbol"
+            and _sexp_symbol_reference(node) == ref
+        ):
+            instance = node
+            break
+    if instance is None:
+        raise SchEditError(f"Symbol {ref!r} not found in {sch_path.name}")
+
+    lib_id_node = _sexp_child(instance, "lib_id")
+    if lib_id_node is None or len(lib_id_node) < 2:
+        raise SchEditError(f"Symbol {ref!r} has no lib_id")
+    old_lib_id = str(lib_id_node[1])
+    lib_id_node[1] = sexp.Quoted(new_lib_id)
+
+    lib_symbols = _sexp_child(tree, "lib_symbols")
+    if lib_symbols is None:
+        raise SchEditError(f"{sch_path.name} has no lib_symbols block")
+    if not _sexp_has_symbol(lib_symbols, new_lib_id):
+        entry = copy.deepcopy(new_definition)
+        entry[1] = sexp.Quoted(new_lib_id)
+        lib_symbols.append(entry)
+
+    _rewrite_pin_entries(instance, new_pins)
+    sch_path.write_text(sexp.dumps(tree))
+    return {
+        "reference": ref,
+        "from_lib_id": old_lib_id,
+        "to_lib_id": new_lib_id,
+        "pins": [p["number"] for p in new_pins],
+    }
+
+
+def symbol_pin_geometry(sch_path: Path, ref: str) -> dict[str, Any]:
+    """Pin numbers and world positions for symbol `ref` (via kicad-skip).
+
+    `wired_positions` are the positions of pins that currently have a wire
+    attached — comparing them before/after a swap spots wires left dangling.
+    """
+    sch = _load(sch_path)
+    numbers: list[str] = []
+    positions: list[list[float]] = []
+    wired: list[list[float]] = []
+    for sym in sch.symbol:
+        if _prop(sym, "Reference") != ref:
+            continue
+        for pin in _iter_symbol_pins(sym):
+            try:
+                loc = pin.location
+                xy = [round(loc.x, 3), round(loc.y, 3)]
+            except Exception:
+                continue
+            numbers.append(_safe_pin_attr(pin, "number"))
+            positions.append(xy)
+            try:
+                if pin.attached_wires:
+                    wired.append(xy)
+            except Exception:
+                pass
+    return {"numbers": numbers, "positions": positions, "wired_positions": wired}
+
+
 def sheet_index(proj: Project) -> list[dict[str, Any]]:
     """Return the project's sheets in kicad-cli page order.
 
@@ -650,6 +730,40 @@ def _sexp_has_symbol(lib_symbols: list, lib_id: str) -> bool:
         ):
             return True
     return False
+
+
+def _sexp_symbol_reference(symbol_node: list) -> str | None:
+    """The Reference value of a `(symbol ...)` instance node."""
+    for child in symbol_node:
+        if (
+            isinstance(child, list) and len(child) >= 3
+            and child[0] == "property" and child[1] == "Reference"
+        ):
+            return str(child[2])
+    return None
+
+
+def _rewrite_pin_entries(instance: list, new_pins: list[dict[str, str]]) -> None:
+    """Replace a symbol instance's `(pin ...)` children with a fresh set.
+
+    Pin entries sit after the properties and before the `(instances ...)`
+    block; new entries get freshly-minted UUIDs.
+    """
+    q = sexp.Quoted
+    instance[:] = [
+        c for c in instance if not (isinstance(c, list) and c and c[0] == "pin")
+    ]
+    pin_nodes = [
+        ["pin", q(p["number"]), ["uuid", q(str(_uuid.uuid4()))]] for p in new_pins
+    ]
+    idx = next(
+        (
+            i for i, c in enumerate(instance)
+            if isinstance(c, list) and c and c[0] == "instances"
+        ),
+        len(instance),
+    )
+    instance[idx:idx] = pin_nodes
 
 
 def _build_symbol_instance(
