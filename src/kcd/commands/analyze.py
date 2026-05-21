@@ -92,6 +92,15 @@ _VALUE_BUDGET = 8_000     # max JSON chars for one inline section before it spil
 _TOTAL_BUDGET = 40_000    # max JSON chars for the whole compacted `data`
 _SAMPLE_BUDGET = 2_000    # a spilled list keeps a sample only if it fits this
 
+# Sections that are bulky by nature — net maps, layer stackup, silkscreen,
+# per-domain copper lists. Always spilled to the artifact regardless of size:
+# even a "small" 80-entry net map is noise an agent rarely needs inline
+# (Round-6 field report — `analyze pcb` was still the token hog).
+_BULKY_SECTIONS = frozenset({
+    "nets", "net_name_to_id", "layers", "silkscreen",
+    "ground_domains", "copper_presence",
+})
+
 _SEVERITY_RANK = {
     "critical": 0, "error": 1, "warning": 2,
     "info": 3, "advisory": 4, "debug": 5,
@@ -132,13 +141,34 @@ def _fold_findings(findings: list) -> list[dict]:
     return out
 
 
+def _spill_stub(value: object) -> dict | None:
+    """A `{count, sample}` placeholder for a section spilled to the artifact.
+
+    Lists sample their first entries, dicts their first key/value pairs.
+    Scalars have nothing useful to stub — return None so the key is named
+    in `spilled.sections` but carries no inline value.
+    """
+    if isinstance(value, list):
+        sample: object = value[:_FOLD_SAMPLE]
+        stub: dict = {"count": len(value)}
+    elif isinstance(value, dict):
+        sample = dict(list(value.items())[:_FOLD_SAMPLE])
+        stub = {"count": len(value)}
+    else:
+        return None
+    if sample and _jsize(sample) <= _SAMPLE_BUDGET:
+        stub["sample"] = sample
+    return stub
+
+
 def _compact(data: dict) -> dict:
     """Shrink an analyzer report for the inline envelope.
 
     `findings` is folded; `summary` / `trust_summary` ride verbatim; the
     remaining sections are kept smallest-first while under budget and the
-    rest spill (named in `spilled.sections`). The complete report is always
-    written to the artifact by `_save_artifact`.
+    rest spill (named in `spilled.sections`), as do the always-bulky
+    sections in `_BULKY_SECTIONS`. The complete report is always written to
+    the artifact by `_save_artifact`.
     """
     if not isinstance(data, dict):
         return data
@@ -163,16 +193,14 @@ def _compact(data: dict) -> dict:
     )
     for key, value in rest:
         size = _jsize(value)
-        if size <= _VALUE_BUDGET and used + size <= _TOTAL_BUDGET:
+        bulky = key in _BULKY_SECTIONS
+        if not bulky and size <= _VALUE_BUDGET and used + size <= _TOTAL_BUDGET:
             out[key] = value
             used += size
         else:
             spilled.append(key)
-            if isinstance(value, list):
-                stub: dict = {"count": len(value)}
-                sample = value[:_FOLD_SAMPLE]
-                if sample and _jsize(sample) <= _SAMPLE_BUDGET:
-                    stub["sample"] = sample
+            stub = _spill_stub(value)
+            if stub is not None:
                 out[key] = stub
 
     if spilled:
@@ -182,6 +210,17 @@ def _compact(data: dict) -> dict:
                     "the full analyzer JSON is in the artifact",
         }
     return out
+
+
+def _dedup_net_maps(data: dict) -> None:
+    """Drop `net_name_to_id` — the exact inverse of `nets` (id→name).
+
+    `analyze_pcb` emits both directions of the same ~80-entry map; keeping
+    only `nets` halves the net payload in the artifact and the envelope
+    (Round-6 field report). The inverse is trivially reconstructable.
+    """
+    if "nets" in data and "net_name_to_id" in data:
+        del data["net_name_to_id"]
 
 
 def _save_artifact(
@@ -426,6 +465,7 @@ def analyze_pcb_cmd(
         )
         _lift_findings(data, r)
         _reconcile_connectivity(data, proj, r)
+        _dedup_net_maps(data)
         _save_artifact(
             data, Path(out) if out else None,
             f"{proj.name}-analyze-pcb.json",

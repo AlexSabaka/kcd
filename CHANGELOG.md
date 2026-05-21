@@ -268,6 +268,15 @@ Initial alpha release.
   `--page-size-mode 2` (board area only) + `--exclude-drawing-sheet`, so the
   board fills the render. `export pdf --target pcb` keeps the framed sheet.
   Round-5 field report R5-1.
+- `kcd analyze pcb` inline envelope is now genuinely small on net-heavy
+  boards. The Round-5 B2 fold only spilled *list*-typed sections, so dict
+  sections (the `nets` / `net_name_to_id` maps, `layers`, `silkscreen`) and
+  mid-size per-domain lists each fit the per-section budget and stayed fully
+  inline. `_compact` now spills dict sections too — with a `{count, sample}`
+  stub — and an always-spill set (`_BULKY_SECTIONS`) covers the sections that
+  are bulky by nature regardless of size. `analyze pcb` additionally drops
+  `net_name_to_id` (the exact inverse of `nets`) from both the artifact and
+  the envelope. Round-6 field report.
 
 ### Added (continued)
 - `kcd edit pcb-text add|set` — add or edit free text on the PCB over live
