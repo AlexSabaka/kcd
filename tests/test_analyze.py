@@ -240,7 +240,9 @@ def test_analyze_gerbers_envelope_shape(monkeypatch, tmp_path: Path) -> None:
     out = json.loads(result.stdout)
     assert out["ok"] is True
     assert out["command"] == "analyze.gerbers"
-    assert out["data"]["layers"] == ["F.Cu", "B.Cu"]
+    # `layers` is a bulky-by-nature section — it spills to a count + sample
+    # (R6 C1), and the full list always survives in the artifact.
+    assert out["data"]["layers"] == {"count": 2, "sample": ["F.Cu", "B.Cu"]}
 
 
 def test_analyze_gerbers_requires_directory_not_file(monkeypatch, tmp_path: Path) -> None:
