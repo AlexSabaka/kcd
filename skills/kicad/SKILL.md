@@ -67,6 +67,31 @@ findings need verification against the primary source (`kcd inspect ref`,
 `references/pcb-layout-analysis.md`, and `references/standards-compliance.md`
 for the deep-dive methodology.
 
+## Agentic Editing & Iteration
+
+The analyzers above are kcd's **review** surface — read-only. kcd also has an
+**editing** surface that carries a board from diagnosis toward fab:
+schematic edits (`edit value` / `symbol` / `net` / …), PCB edits
+(`edit move-fp` / `track` / `via` / `zone` / `pcb-text` / `swap-fp`,
+`route track`), plus `snapshot`, `render`, and `export`. Review and editing
+are two distinct modes — the design-review contract below governs review.
+
+**Before any session that *changes* a project, read
+`references/agentic-editing.md`.** It carries the canonical edit loop, the
+mutating-tool catalog, and the KiCad constraints that govern them. The
+essentials:
+
+- **The edit loop:** `snapshot create` (labelled) → measure the baseline
+  (`drc` / `analyze`) → render the region BEFORE → one mutation → render the
+  region AFTER → reroute / refill stranded copper → measure the delta with
+  `kcd drc <project> --since <snapshot>` → keep only if net-positive, else
+  `snapshot restore`.
+- **KiCad ceilings (10.0.2), not kcd's:** no headless forward annotation
+  (F8) — a schematic edit does NOT reach the PCB; having the schematic and
+  PCB editors open at once segfaults IPC — run PCB-editor-only; every IPC
+  edit's `board.save()` also persists the user's unsaved editor changes.
+  Confirm what is open with `kcd project current` before mutating.
+
 ## Related Skills
 
 | Skill | Purpose |
@@ -298,6 +323,10 @@ two runs. Pass `--out <path>` to write the JSON somewhere specific. These
 files are expensive to regenerate (large schematics take time) — keep them
 around during a review session; they're not worth committing to git.
 
+The artifact `path` is on the kcd **host** — in a sandboxed / MCP
+environment it may not be readable from the agent's own container; prefer
+the inline envelope `data`. See `references/agentic-editing.md` §5.
+
 ### Harmonized Output Format
 
 All analyzers produce a uniform output envelope:
@@ -369,7 +398,7 @@ Key nested structures:
 ```
 analyzer_type, schema_version, summary, findings, trust_summary,
 file, kicad_version, file_version, statistics, layers, setup,
-nets, net_name_to_id, board_outline, component_groups, footprints,
+nets, board_outline, component_groups, footprints,
 tracks, vias, zones, keepout_zones, connectivity, net_lengths
 ```
 Optional: `power_net_routing`, `decoupling_placement`, `ground_domains`, `layer_transitions`, `silkscreen`, `board_metadata`, `dimensions`, `groups`, `net_classes`, `dfm_summary`, `placement_density`, `copper_presence_summary`, `board_thickness_mm`, `trace_proximity` (with `--proximity`). Sections previously at top level (`thermal_analysis`, `thermal_pad_vias`, `tombstoning_risk`, `placement_analysis`, `current_capacity`, `copper_presence`, `dfm`) are now in `findings[]`. With `--full`, the output also includes a `connectivity_graph` section (see "Connectivity Graph" above).
@@ -378,7 +407,7 @@ Key nested structures:
 - `net_lengths` is a **list** (not dict): `[{net, net_number, total_length_mm, segment_count, via_count, layers{}}, ...]` sorted by length descending
 - `power_net_routing` is a **list**: `[{net, track_count, total_length_mm, min_width_mm, max_width_mm, widths_used[]}, ...]`
 - `footprints[]`: `{reference, value, footprint, layer, pads[], sch_path, sch_sheetname, sch_sheetfile, connected_nets[], ...}`
-- `statistics`: `{footprint_count, copper_layers_used, smd_count, tht_count, zone_count, via_count, routing_complete, ...}`
+- `statistics`: `{footprint_count, copper_layers_used, smd_count, tht_count, zone_count, via_count, routing_complete, ...}` — `routing_complete` here and `connectivity.routing_complete` are both DRC-reconciled (downgraded when DRC finds unconnected pads), so they agree; `connectivity` additionally carries `drc_unconnected`. Read routing readiness from `connectivity` — it is the richer block.
 
 **Gerber analyzer top-level keys:**
 ```
@@ -585,6 +614,7 @@ Detailed methodology and format documentation lives in reference files. Read the
 | `schematic-analysis.md` | 1133 | Deep schematic review: datasheet validation, design patterns, error taxonomy, tolerance stacking, GPIO audit, motor control, battery life, supply chain |
 | `pcb-layout-analysis.md` | 447 | Advanced PCB: impedance calculations, differential pairs, return paths, copper balance, edge clearance, copper-sensitive components (capacitive touch, antennas), custom analysis scripts |
 | `output-schema.md` | 293 | Full analyzer JSON schema with field names, types, and common extraction patterns |
+| `agentic-editing.md` | — | **Editing sessions** (mutating a project): the snapshot→mutate→measure loop, KiCad/IPC ceilings, the mutating-tool catalog, host/container artifact paths |
 | `file-formats.md` | 379 | Manual file inspection: S-expression structure, field-by-field docs for all KiCad file types, version detection |
 | `gerber-parsing.md` | 729 | Gerber/Excellon format details, X2 attributes, analysis techniques |
 | `pdf-schematic-extraction.md` | 315 | PDF schematic analysis: extraction workflow, notation conventions, KiCad translation |

@@ -60,6 +60,28 @@ datasheet_page_selector, etc.) are intentionally left as upstream — the
 kcd-native preamble tells the reader to substitute `skills/kicad` for
 `<skill-path>` so the existing examples still work from the kcd repo root.
 
+### SKILL.md + references/agentic-editing.md — editing surface
+
+Driven by `docs/Dove-to-Cheetah-Skill-Audit-Report.md` (the R6 field-test
+audit). Upstream kicad-happy is a review-only skill; kcd adds a mutating
+surface (edit / render / snapshot / route / export) with no upstream
+equivalent, so this content is **kcd-native, not a divergence from upstream
+text**:
+
+- New `references/agentic-editing.md` — the edit loop, KiCad/IPC ceilings,
+  the mutating-tool catalog, host/container artifact paths. Entirely kcd's.
+- SKILL.md gains a `## Agentic Editing & Iteration` body section pointing
+  to it, plus a row in the Reference Files table.
+- Stale-fact corrections to the kcd-native schema notes (not upstream
+  text): dropped `net_name_to_id` from the PCB top-level key list (kcd
+  dedupes it), noted `routing_complete` is DRC-reconciled in both
+  `statistics` and `connectivity`, and added the host/container artifact
+  caveat. These reflect kcd R5-R7 behaviour, not kicad-happy.
+
+The audit's `CODE-BUG+CAVEAT` items (A2, C, D1, D2) were **fixed in the kcd
+R6 rework / R7**, so the skill documents working features rather than
+carrying caveats.
+
 ## Interesting findings (not patches, but worth surfacing)
 
 - **cross_analysis vs kcd parity disagree on pic_programmer drift.**
