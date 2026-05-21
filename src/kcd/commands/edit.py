@@ -464,8 +464,10 @@ def swap_symbol(
             if bad_old or bad_new:
                 raise CommandError(
                     "bad_pin_map",
-                    f"--pin-map references unknown pins (old: {sorted(bad_old)}, "
-                    f"new: {sorted(bad_new)}).",
+                    f"--pin-map references unknown pins "
+                    f"(bad old: {sorted(bad_old)}, bad new: {sorted(bad_new)}). "
+                    f"Valid {ref} pins: {sorted(old_pins)}; "
+                    f"valid {to_lib_id} pins: {sorted(new_pins)}.",
                 )
 
         wired_before = {tuple(p) for p in before["wired_positions"]}

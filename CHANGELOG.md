@@ -298,6 +298,12 @@ Initial alpha release.
   board net always read `stale: false`. The comparison now normalizes the
   leading `/` on both sides (root-level nets; a sub-sheet-nested net is still
   out of reach). Round-6 field report.
+- `kcd edit symbol` `bad_pin_map` error now enumerates the valid pins. When
+  `--pin-map` referenced a pin neither part has, the error listed only the
+  unknown pins — leaving the caller to guess the right ones. It now also
+  names the valid pin numbers of both the current and the target symbol
+  (with derived-symbol pins resolving from the `extends` fix above). Round-6
+  field report.
 
 ### Added (continued)
 - `kcd edit pcb-text add|set` — add or edit free text on the PCB over live

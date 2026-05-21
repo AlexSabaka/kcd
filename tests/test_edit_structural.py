@@ -253,3 +253,23 @@ def test_swap_symbol_bad_pin_map(proj: Path, monkeypatch) -> None:
     ])
     assert r.exit_code == 1
     assert json.loads(r.stdout)["error"]["code"] == "bad_pin_map"
+
+
+def test_swap_symbol_bad_pin_map_enumerates_valid_pins(
+    proj: Path, monkeypatch,
+) -> None:
+    """A well-formed --pin-map that references a pin no part has → the error
+    enumerates the valid pins so the caller can correct it (Round-6)."""
+    monkeypatch.setenv("KCD_SYMBOL_DIR", str(_LIB_FIXTURE))
+    runner = CliRunner()
+    r = runner.invoke(edit_app, [
+        "symbol", str(proj), "--ref", "R1", "--to-lib-id", "mylib:Q_NPN",
+        "--pin-map", "1=9", *_OFFLINE,
+    ])
+    assert r.exit_code == 1
+    out = json.loads(r.stdout)
+    assert out["error"]["code"] == "bad_pin_map"
+    msg = out["error"]["message"]
+    assert "Valid R1 pins" in msg
+    assert "valid mylib:Q_NPN pins" in msg
+    assert "['1', '2', '3']" in msg   # Q_NPN's three pins
