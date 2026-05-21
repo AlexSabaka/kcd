@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import tempfile
 from pathlib import Path
 
 import typer
@@ -177,15 +178,101 @@ def _region_dpi(dpi: int, region: tuple[float, float, float, float],
     return min(_REGION_DPI_CAP, round(dpi * board_bbox["width"] / region_w))
 
 
+# --- side selection + layer transparency for `render pcb` (Round-6) ----------
+# kicad-cli composites the SVG flat with no opacity control, so a board with a
+# B.Cu ground pour renders as an opaque fill that hides everything underneath.
+# `--side` picks a clean single-side layer set; `--side both` exports the two
+# sides separately and stacks them with the back copper faded.
+
+_SIDE_LAYERS = {
+    "top": ["F.Cu", "F.SilkS", "Edge.Cuts"],
+    "bottom": ["B.Cu", "B.SilkS", "Edge.Cuts"],
+}
+_SVG_OPEN_RE = re.compile(r"<svg\b[^>]*>", re.IGNORECASE)
+
+
+def _svg_inner(svg_text: str) -> str:
+    """The markup between an SVG's root `<svg ...>` and its closing `</svg>`."""
+    m = _SVG_OPEN_RE.search(svg_text)
+    end = svg_text.rfind("</svg>")
+    if m is None or end < 0:
+        raise CommandError("bad_svg", "kicad-cli SVG is missing its <svg> root.")
+    return svg_text[m.end():end]
+
+
+def _composite_layers(front: str, back: str, back_opacity: float) -> str:
+    """Stack two board-area PCB SVGs into one — `back` faded under `front`.
+
+    Both are `--page-size-mode 2` exports, so they share a viewBox and
+    overlay exactly. The front SVG's root element is kept; the back SVG's
+    content is inserted first inside a reduced-opacity `<g>`, so the back
+    copper shows through the front's gaps without hiding the front.
+    """
+    m = _SVG_OPEN_RE.search(front)
+    if m is None:
+        raise CommandError("bad_svg", "kicad-cli SVG is missing its <svg> root.")
+    return (
+        f"{front[:m.end()]}\n"
+        f'<g opacity="{back_opacity:.3f}">{_svg_inner(back)}</g>\n'
+        f"<g>{_svg_inner(front)}</g>\n"
+        "</svg>\n"
+    )
+
+
+def _export_board_svg(
+    cli: str,
+    pcb: Path,
+    dest: Path,
+    *,
+    side: str,
+    explicit_layers: list[str] | None,
+    back_opacity: float,
+) -> None:
+    """Write a board SVG to `dest`, honoring `--side` / an explicit `--layers`.
+
+    An explicit `--layers` wins outright. Otherwise `--side top|bottom`
+    renders that side's layer set (mirroring the bottom so its text reads),
+    and `--side both` composites the two sides with the back faded.
+    """
+    if explicit_layers is not None:
+        kicad_cli.export_pcb_svg(cli, pcb, dest, layers=explicit_layers)
+        return
+    if side == "both":
+        with tempfile.TemporaryDirectory(prefix="kcd-side-") as td:
+            front_p = Path(td) / "front.svg"
+            back_p = Path(td) / "back.svg"
+            kicad_cli.export_pcb_svg(cli, pcb, front_p, layers=_SIDE_LAYERS["top"])
+            kicad_cli.export_pcb_svg(
+                cli, pcb, back_p, layers=_SIDE_LAYERS["bottom"]
+            )
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(_composite_layers(
+                front_p.read_text(), back_p.read_text(), back_opacity
+            ))
+        return
+    kicad_cli.export_pcb_svg(
+        cli, pcb, dest,
+        layers=_SIDE_LAYERS[side], mirror=(side == "bottom"),
+    )
+
+
 @render_app.command("pcb")
 def pcb(
     project: str = typer.Argument(...),
     out: Path = typer.Option(..., "-o", "--out"),
     format_: str = typer.Option("svg", "-f", "--format", help="svg | pdf | png"),
-    layers: str = typer.Option(
-        "F.Cu,B.Cu,F.SilkS,B.SilkS,Edge.Cuts",
-        "--layers",
-        help="Comma-separated layer names",
+    side: str = typer.Option(
+        "top", "--side",
+        help="top | bottom | both — which side's layers to render; 'both' "
+             "stacks them with the back faded. Ignored when --layers is set.",
+    ),
+    layers: str | None = typer.Option(
+        None, "--layers",
+        help="Comma-separated layer names — explicit override of --side.",
+    ),
+    back_opacity: float = typer.Option(
+        0.35, "--back-opacity",
+        help="Back-copper opacity for --side both (0..1, default 0.35).",
     ),
     dpi: int = typer.Option(300, "--dpi", help="DPI for PNG rasterization"),
     region_ref: str | None = typer.Option(
@@ -197,20 +284,44 @@ def pcb(
     ),
     region_window: float = typer.Option(
         20.0, "--region-window",
-        help="Square window side in mm for --region-ref (default 20).",
+        help="Square window side in mm for --region-ref (default 20). "
+             "~20-24 mm is neighbourhood scale; use ~8-10 mm to see 0402 "
+             "pads / 0.15 mm stubs.",
     ),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Render PCB layers to SVG, PDF, or PNG (flat 2D layer view).
 
-    `--region-ref` / `--region-bbox` crop the render to a sub-area so fine
-    placement is visible; they apply to svg/png only and need KiCad open.
+    `--side` picks which copper side to show — kicad-cli composites layers
+    flat with no opacity, so rendering both coppers lets a ground pour hide
+    everything. Default `top`; `--side both` stacks the two sides with the
+    back faded (`--back-opacity`). `--region-ref` / `--region-bbox` crop to a
+    sub-area so fine placement is visible (svg/png only, needs KiCad open).
     """
     with run_command("render.pcb", json_) as r:
         cfg = cfg_mod.load()
         proj = resolve(project)
-        layer_list = [s.strip() for s in layers.split(",") if s.strip()]
         fmt = format_.lower()
+        side_l = side.lower()
+        if side_l not in ("top", "bottom", "both"):
+            raise CommandError(
+                "bad_side", f"--side must be top, bottom, or both; got {side!r}."
+            )
+        explicit_layers = (
+            [s.strip() for s in layers.split(",") if s.strip()] if layers else None
+        )
+        composite = side_l == "both" and explicit_layers is None
+        if composite and not 0.0 <= back_opacity <= 1.0:
+            raise CommandError(
+                "bad_opacity", "--back-opacity must be between 0 and 1."
+            )
+        if explicit_layers is not None:
+            reported_layers = explicit_layers
+        elif composite:
+            reported_layers = _SIDE_LAYERS["top"] + _SIDE_LAYERS["bottom"]
+        else:
+            reported_layers = _SIDE_LAYERS[side_l]
+
         region = _resolve_region(region_ref, region_bbox, region_window)
         board_b: dict[str, float] | None = None
         if region is not None:
@@ -222,38 +333,47 @@ def pcb(
             board_b = kipy_pcb.board_bbox()
 
         if fmt == "svg":
-            kicad_cli.export_pcb_svg(cfg.kicad_cli, proj.pcb, out, layers=layer_list)
+            _export_board_svg(
+                cfg.kicad_cli, proj.pcb, out,
+                side=side_l, explicit_layers=explicit_layers,
+                back_opacity=back_opacity,
+            )
             if region is not None and board_b is not None:
                 _crop_svg_region(out, region, board_b)
-            r.add_artifact("pcb_svg", str(out), layers=layer_list)
+            r.add_artifact("pcb_svg", str(out), layers=reported_layers)
         elif fmt == "pdf":
-            kicad_cli.export_pcb_pdf(cfg.kicad_cli, proj.pcb, out, layers=layer_list)
-            r.add_artifact("pcb_pdf", str(out), layers=layer_list)
+            if composite:
+                raise CommandError(
+                    "bad_side", "--side both applies to svg/png, not pdf."
+                )
+            pdf_layers = explicit_layers or _SIDE_LAYERS[side_l]
+            kicad_cli.export_pcb_pdf(cfg.kicad_cli, proj.pcb, out, layers=pdf_layers)
+            r.add_artifact("pcb_pdf", str(out), layers=pdf_layers)
         elif fmt == "png":
             try:
+                svg_tmp = out.parent / f".{out.stem}.svg"
+                _export_board_svg(
+                    cfg.kicad_cli, proj.pcb, svg_tmp,
+                    side=side_l, explicit_layers=explicit_layers,
+                    back_opacity=back_opacity,
+                )
+                rdpi = dpi
                 if region is not None and board_b is not None:
-                    svg_tmp = out.parent / f".{out.stem}.svg"
-                    kicad_cli.export_pcb_svg(
-                        cfg.kicad_cli, proj.pcb, svg_tmp, layers=layer_list
-                    )
                     _crop_svg_region(svg_tmp, region, board_b)
-                    kicad_cli._rasterize_svg(
-                        svg_tmp, out, _region_dpi(dpi, region, board_b)
-                    )
-                else:
-                    kicad_cli.export_pcb_png(
-                        cfg.kicad_cli, proj.pcb, out, layers=layer_list, dpi=dpi
-                    )
-                r.add_artifact("pcb_png", str(out), layers=layer_list, dpi=dpi)
+                    rdpi = _region_dpi(dpi, region, board_b)
+                kicad_cli._rasterize_svg(svg_tmp, out, rdpi)
+                r.add_artifact("pcb_png", str(out), layers=reported_layers, dpi=rdpi)
             except kicad_cli.CliError:
                 fmt = "svg"
                 svg_out = out.with_suffix(".svg")
-                kicad_cli.export_pcb_svg(
-                    cfg.kicad_cli, proj.pcb, svg_out, layers=layer_list
+                _export_board_svg(
+                    cfg.kicad_cli, proj.pcb, svg_out,
+                    side=side_l, explicit_layers=explicit_layers,
+                    back_opacity=back_opacity,
                 )
                 if region is not None and board_b is not None:
                     _crop_svg_region(svg_out, region, board_b)
-                r.add_artifact("pcb_svg", str(svg_out), layers=layer_list)
+                r.add_artifact("pcb_svg", str(svg_out), layers=reported_layers)
                 r.warn(
                     "PNG rasterization failed; emitted SVG instead — the SVG "
                     "renders fine, only the inline PNG preview is unavailable."
@@ -262,7 +382,11 @@ def pcb(
             raise CommandError(
                 "invalid_format", f"Unknown format {format_!r}; use svg, pdf, or png"
             )
-        r.data = {"project": proj.name, "format": fmt, "layers": layer_list}
+        r.data = {
+            "project": proj.name, "format": fmt,
+            "side": "custom" if explicit_layers is not None else side_l,
+            "layers": reported_layers,
+        }
         if region is not None:
             r.data["region_mm"] = [round(v, 3) for v in region]
 

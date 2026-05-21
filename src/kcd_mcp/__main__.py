@@ -858,6 +858,8 @@ def kcd_render_pcb(
     project: str,
     out: str,
     fmt: str = "svg",
+    side: str = "top",
+    back_opacity: float = 0.35,
     region_ref: str | None = None,
     region_bbox: str | None = None,
     region_window: float = 20.0,
@@ -867,10 +869,17 @@ def kcd_render_pcb(
     fmt: svg | pdf | png — written to `out` on disk. An inline PNG preview is
     also returned so the agent can see the render directly.
 
+    side: top | bottom | both — which copper side to show. kicad-cli composites
+    layers flat with no opacity, so rendering both coppers lets a ground pour
+    hide everything; 'top' (default) is a clean single-side view, 'both' stacks
+    the two sides with the back faded (back_opacity, 0..1).
+
     region_ref / region_bbox crop the render to a sub-area for fine-placement
     inspection (svg/png only, needs KiCad open): region_ref centres a
     region_window-mm square on a footprint; region_bbox is 'x1,y1,x2,y2' mm.
+    ~20-24 mm is neighbourhood scale; use ~8-10 mm to see 0402 pads / stubs.
     """
+    side_args = ["--side", side, "--back-opacity", str(back_opacity)]
     region_args: list[str] = []
     if region_ref:
         region_args += [
@@ -879,13 +888,14 @@ def kcd_render_pcb(
     if region_bbox:
         region_args += ["--region-bbox", region_bbox]
     env = _run(
-        ["render", "pcb", project, "--out", out, "--format", fmt, *region_args]
+        ["render", "pcb", project, "--out", out, "--format", fmt,
+         *side_args, *region_args]
     )
     if not env.get("ok"):
         return env
     preview = out if fmt == "png" else _render_preview(
         ["render", "pcb", project, "--format", "png", "--dpi", "150",
-         *region_args]
+         *side_args, *region_args]
     )
     return _attach_image(env, preview)
 

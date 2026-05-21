@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 
 from kcd.adapters import kicad_cli, kipy_pcb
 from kcd.commands.render import (
+    _composite_layers,
     _crop_svg_region,
     _region_dpi,
     _region_viewbox,
@@ -38,9 +39,9 @@ def _boom(*a, **k):
 
 
 def test_render_pcb_png_degrades_to_svg(proj_dir: Path, monkeypatch) -> None:
-    monkeypatch.setattr(kicad_cli, "export_pcb_png", _boom)
+    monkeypatch.setattr(kicad_cli, "_rasterize_svg", _boom)
 
-    def fake_pcb_svg(cli, pcb, out, layers=None):
+    def fake_pcb_svg(cli, pcb, out, layers=None, mirror=False):
         Path(out).write_text("<svg/>")
         return out
 
@@ -154,7 +155,7 @@ def test_render_pcb_region_bbox_crops_the_svg(
     """`render pcb --region-bbox` rewrites the exported SVG's viewBox."""
     monkeypatch.setattr(kipy_pcb, "board_bbox", lambda: dict(_BOARD))
 
-    def fake_pcb_svg(cli, pcb, out, layers=None):
+    def fake_pcb_svg(cli, pcb, out, layers=None, mirror=False):
         Path(out).write_text(
             '<svg width="40mm" height="40mm" viewBox="0 0 4000 4000"><rect/></svg>'
         )
@@ -184,3 +185,133 @@ def test_render_pcb_region_rejected_for_pdf(proj_dir: Path, monkeypatch) -> None
     )
     assert r.exit_code == 1
     assert json.loads(r.stdout)["error"]["code"] == "bad_region"
+
+
+# ---------------------------------------------------------------------------
+# Side selection + layer transparency (Round-6 field report)
+# ---------------------------------------------------------------------------
+
+def _capturing_svg(calls: list[dict]):
+    """An `export_pcb_svg` fake that records its layer/mirror args."""
+    def fake(cli, pcb, out, layers=None, mirror=False):
+        calls.append({"layers": layers, "mirror": mirror})
+        tag = "F" if layers and "F.Cu" in layers else "B"
+        Path(out).write_text(
+            f'<svg width="40mm" viewBox="0 0 4000 4000"><rect id="{tag}"/></svg>'
+        )
+        return out
+    return fake
+
+
+def test_composite_layers_stacks_back_under_front() -> None:
+    """`_composite_layers` keeps the front root and inserts the back first,
+    inside a faded group, so the back shows through without hiding the front."""
+    front = '<svg viewBox="0 0 10 10" width="10mm"><rect id="F"/></svg>'
+    back = '<svg viewBox="0 0 10 10" width="10mm"><rect id="B"/></svg>'
+    result = _composite_layers(front, back, 0.35)
+    assert '<g opacity="0.350">' in result
+    assert result.index('id="B"') < result.index('id="F"')   # back drawn first
+    assert 'viewBox="0 0 10 10"' in result                    # front root kept
+    assert result.count("<svg") == 1 and result.count("</svg>") == 1
+
+
+def test_composite_layers_rejects_svg_without_root() -> None:
+    with pytest.raises(CommandError):
+        _composite_layers("not an svg", "<svg></svg>", 0.35)
+
+
+def test_render_pcb_side_top_is_the_clean_default(
+    proj_dir: Path, monkeypatch,
+) -> None:
+    """`render pcb` defaults to a single-side top view — no B.Cu, so a
+    ground pour can't hide the front (Round-6 field report)."""
+    calls: list[dict] = []
+    monkeypatch.setattr(kicad_cli, "export_pcb_svg", _capturing_svg(calls))
+    r = CliRunner().invoke(
+        render_app,
+        ["pcb", str(proj_dir), "--out", str(proj_dir / "b.svg"), "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    assert len(calls) == 1
+    assert calls[0]["layers"] == ["F.Cu", "F.SilkS", "Edge.Cuts"]
+    assert calls[0]["mirror"] is False
+    assert json.loads(r.stdout)["data"]["side"] == "top"
+
+
+def test_render_pcb_side_bottom_mirrors(proj_dir: Path, monkeypatch) -> None:
+    """`--side bottom` renders the back layer set, mirrored so text reads."""
+    calls: list[dict] = []
+    monkeypatch.setattr(kicad_cli, "export_pcb_svg", _capturing_svg(calls))
+    r = CliRunner().invoke(
+        render_app,
+        ["pcb", str(proj_dir), "--out", str(proj_dir / "b.svg"),
+         "--side", "bottom", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    assert calls[0]["layers"] == ["B.Cu", "B.SilkS", "Edge.Cuts"]
+    assert calls[0]["mirror"] is True
+
+
+def test_render_pcb_explicit_layers_override_side(
+    proj_dir: Path, monkeypatch,
+) -> None:
+    """An explicit `--layers` wins over `--side`."""
+    calls: list[dict] = []
+    monkeypatch.setattr(kicad_cli, "export_pcb_svg", _capturing_svg(calls))
+    r = CliRunner().invoke(
+        render_app,
+        ["pcb", str(proj_dir), "--out", str(proj_dir / "b.svg"),
+         "--side", "bottom", "--layers", "F.Cu,Edge.Cuts", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    assert calls[0]["layers"] == ["F.Cu", "Edge.Cuts"]
+    assert json.loads(r.stdout)["data"]["side"] == "custom"
+
+
+def test_render_pcb_side_both_composites(proj_dir: Path, monkeypatch) -> None:
+    """`--side both` exports front + back and stacks them with the back faded."""
+    calls: list[dict] = []
+    monkeypatch.setattr(kicad_cli, "export_pcb_svg", _capturing_svg(calls))
+    out_svg = proj_dir / "both.svg"
+    r = CliRunner().invoke(
+        render_app,
+        ["pcb", str(proj_dir), "--out", str(out_svg), "--side", "both",
+         "--back-opacity", "0.4", "--json"],
+    )
+    assert r.exit_code == 0, r.stdout
+    assert len(calls) == 2   # one export per side
+    text = out_svg.read_text()
+    assert '<g opacity="0.400">' in text
+    assert text.index('id="B"') < text.index('id="F"')   # back under front
+
+
+def test_render_pcb_side_both_rejected_for_pdf(
+    proj_dir: Path, monkeypatch,
+) -> None:
+    r = CliRunner().invoke(
+        render_app,
+        ["pcb", str(proj_dir), "--out", str(proj_dir / "b.pdf"),
+         "--format", "pdf", "--side", "both", "--json"],
+    )
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "bad_side"
+
+
+def test_render_pcb_rejects_bad_back_opacity(proj_dir: Path) -> None:
+    r = CliRunner().invoke(
+        render_app,
+        ["pcb", str(proj_dir), "--out", str(proj_dir / "b.svg"),
+         "--side", "both", "--back-opacity", "1.5", "--json"],
+    )
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "bad_opacity"
+
+
+def test_render_pcb_rejects_bad_side(proj_dir: Path) -> None:
+    r = CliRunner().invoke(
+        render_app,
+        ["pcb", str(proj_dir), "--out", str(proj_dir / "b.svg"),
+         "--side", "sideways", "--json"],
+    )
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"]["code"] == "bad_side"

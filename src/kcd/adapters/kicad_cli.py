@@ -159,12 +159,16 @@ def export_sch_netlist(cli: str, sch: Path, out: Path, fmt: str = "kicadxml") ->
 # PCB rendering / export
 # ---------------------------------------------------------------------------
 
-def export_pcb_svg(cli: str, pcb: Path, out: Path, layers: list[str] | None = None) -> Path:
+def export_pcb_svg(
+    cli: str, pcb: Path, out: Path,
+    layers: list[str] | None = None, mirror: bool = False,
+) -> Path:
     """Export PCB layers to SVG, cropped to the board.
 
     `--page-size-mode 2` (board area only) + `--exclude-drawing-sheet` drop
     the A4 worksheet frame, so the board fills the SVG instead of occupying a
     small fraction of an empty sheet — a render an agent can actually read.
+    `mirror` flips the plot (so a bottom-side view reads correctly).
     Render-only; `export pdf --target pcb` keeps the framed sheet.
     """
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -172,6 +176,8 @@ def export_pcb_svg(cli: str, pcb: Path, out: Path, layers: list[str] | None = No
         "pcb", "export", "svg", "--output", str(out),
         "--page-size-mode", "2", "--exclude-drawing-sheet",
     ]
+    if mirror:
+        args.append("--mirror")
     if layers:
         args.extend(["--layers", ",".join(layers)])
     args.append(str(pcb))

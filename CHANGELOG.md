@@ -310,6 +310,14 @@ Initial alpha release.
   the dangling-stub friction every placement move generated. `move_footprint`
   now runs a zone refill before saving (`data.zones_refilled`). Round-6
   field report.
+- `kcd render pcb` PNG/SVG no longer renders as an opaque slab. kicad-cli
+  composites layers flat with no opacity control, so a board with a B.Cu
+  ground pour plotted the back copper as a solid fill that hid the front
+  copper and silk. `render pcb` gains `--side top|bottom|both` (default
+  `top`): `top` / `bottom` render a clean single-side layer set (the bottom
+  mirrored so its text reads), and `both` exports the two sides and stacks
+  them with the back copper faded (`--back-opacity`, default 0.35). An
+  explicit `--layers` still overrides `--side`. Round-6 field report.
 
 ### Added (continued)
 - `kcd edit pcb-text add|set` — add or edit free text on the PCB over live

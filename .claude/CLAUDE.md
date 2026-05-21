@@ -115,7 +115,9 @@ kcd snapshot create|list|restore|diff <proj> [--json]
 
 # See
 kcd render sch <proj> --out <file> [--format svg|png|pdf] [--json]
-kcd render pcb <proj> --out <file> [--format svg|pdf|png] [--region-ref REF | --region-bbox x1,y1,x2,y2] [--region-window MM] [--json]
+kcd render pcb <proj> --out <file> [--format svg|pdf|png] [--side top|bottom|both] [--back-opacity F] [--region-ref REF | --region-bbox x1,y1,x2,y2] [--region-window MM] [--json]
+#   --side top (default) avoids the opaque-B.Cu slab; --side both stacks the layers with the back faded.
+#   --region-window: ~20-24 mm is neighbourhood scale; use ~8-10 mm to see 0402 pads / 0.15 mm stubs.
 kcd render 3d  <proj> --out <file> [--side top|bottom] [--json]
 
 # Read

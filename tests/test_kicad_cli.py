@@ -103,3 +103,14 @@ def test_export_pcb_svg_crops_to_board(tmp_path: Path, monkeypatch) -> None:
     assert "--exclude-drawing-sheet" in captured
     assert "--page-size-mode" in captured
     assert captured[captured.index("--page-size-mode") + 1] == "2"
+    assert "--mirror" not in captured   # off unless requested
+
+
+def test_export_pcb_svg_mirror_flag(tmp_path: Path, monkeypatch) -> None:
+    """`mirror=True` adds `--mirror` so a bottom-side view reads correctly."""
+    captured: list = []
+    monkeypatch.setattr(kicad_cli, "_run", lambda *a, **k: captured.extend(a))
+    kicad_cli.export_pcb_svg(
+        "kicad-cli", tmp_path / "b.kicad_pcb", tmp_path / "b.svg", mirror=True
+    )
+    assert "--mirror" in captured
