@@ -590,12 +590,18 @@ def rename_net(
             from kcd.adapters import kipy_pcb
             kipy_pcb.assert_board_is(proj.pcb)
             board_nets = kipy_pcb.board_net_names()
-            stale = old in board_nets
+            # PCB nets carry a hierarchical-path prefix (`/ELRS_TX`) while
+            # schematic labels are bare (`ELRS_TX`) — compare on the leading
+            # `/`-stripped form, or a genuinely stale net reads as a false
+            # green. Root-level nets only: a sub-sheet-nested net
+            # (`/sheet/NET`) still won't match a bare label.
+            norm_board = {n.removeprefix("/") for n in board_nets}
+            stale = old.removeprefix("/") in norm_board
             r.data["pcb"] = {
                 "checked": True,
                 "stale": stale,
                 "old_net_present": stale,
-                "new_net_present": new in board_nets,
+                "new_net_present": new.removeprefix("/") in norm_board,
             }
             if stale:
                 r.warn(

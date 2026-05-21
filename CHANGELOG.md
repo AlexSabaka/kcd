@@ -291,6 +291,13 @@ Initial alpha release.
   `extends` chain is now followed within the library file: pins resolve from
   the base, properties merge base-then-override (the variant's own values
   win). Round-6 field report.
+- `kcd edit net` PCB drift check no longer reports a false green. After a
+  schematic net rename it checks whether the live board still carries the
+  old name — but compared the bare schematic label (`ELRS_TX`) against
+  hierarchically-prefixed PCB net names (`/ELRS_TX`), so a genuinely stale
+  board net always read `stale: false`. The comparison now normalizes the
+  leading `/` on both sides (root-level nets; a sub-sheet-nested net is still
+  out of reach). Round-6 field report.
 
 ### Added (continued)
 - `kcd edit pcb-text add|set` — add or edit free text on the PCB over live

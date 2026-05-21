@@ -121,3 +121,23 @@ def test_pcb_check_degrades_without_kicad(proj: Path) -> None:
     pcb = out["data"]["pcb"]
     assert pcb["checked"] is False
     assert any("KiCad" in w for w in out["warnings"])
+
+
+def test_pcb_drift_check_normalizes_hierarchical_prefix(
+    proj: Path, monkeypatch,
+) -> None:
+    """PCB nets carry a leading `/` (`/SIGNAL`); the drift check strips it
+    before comparing to the bare schematic label, so a genuinely stale net
+    is reported stale instead of a false green (Round-6 field report)."""
+    from kcd.adapters import kipy_pcb
+    monkeypatch.setattr(kipy_pcb, "assert_board_is", lambda *a, **k: None)
+    monkeypatch.setattr(
+        kipy_pcb, "board_net_names", lambda *a, **k: ["/SIGNAL", "GND"]
+    )
+    out = json.loads(_net(proj, "SIGNAL", "VOUT").stdout)
+    pcb = out["data"]["pcb"]
+    assert pcb["checked"] is True
+    assert pcb["stale"] is True
+    assert pcb["old_net_present"] is True
+    assert pcb["new_net_present"] is False
+    assert any("still carries net" in w for w in out["warnings"])
