@@ -151,6 +151,7 @@ kcd edit net           <proj> --from <OLD> --to <NEW> [--json]   # lib_id-aware 
 kcd edit text titleblock <proj> --field <F> --value <V> [--json] # title/company/rev/date/commentN
 kcd edit text set      <proj> --match <OLD> --to <NEW> [--at X,Y] [--json]  # free graphic text
 kcd edit designrules   <proj> --rule <key> --value <v> [--force] [--json]  # .kicad_pro DRC constraint; --force overrides the open-project guard
+kcd edit swap-fp       <proj> --ref REF --to-footprint <Lib:Name> [--force] [--json]  # offline .kicad_pcb footprint swap; identical pad-numbers only; --force overrides the open-project guard
 
 # Change (PCB - needs KiCad open via IPC)
 kcd edit move-fp <proj> --ref R5 --x 100 --y 50 [--rotation 90] [--json]

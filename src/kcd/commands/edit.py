@@ -765,6 +765,64 @@ def designrules(
         r.data = {"updated": kicad_pro.set_design_rule(proj.pro, rule, value)}
 
 
+@edit_app.command("swap-fp")
+def swap_fp(
+    project: str = typer.Argument(...),
+    ref: str = typer.Option(..., "--ref", help="Reference of the footprint to swap"),
+    to_footprint: str = typer.Option(
+        ..., "--to-footprint", help="New footprint, as Library:Name"
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Write even if KiCad has the project open"
+    ),
+    no_snapshot: bool = typer.Option(False, "--no-snapshot"),
+    no_render: bool = typer.Option(False, "--no-render"),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Swap a placed PCB footprint for a different library footprint.
+
+    An offline `.kicad_pcb` edit — kipy IPC cannot swap a footprint
+    definition (kipy 0.7.1 has no footprint-library API). The new footprint
+    must declare the same pad numbers as the placed one; each pad keeps its
+    net (identity remap). Use it to push a footprint change to the board
+    where KiCad 10's headless forward annotation can't.
+
+    Refuses with `project_open_in_kicad` when KiCad has the project loaded —
+    it would overwrite this edit on its next save. Close it, or pass --force.
+    """
+    with run_command("edit.swap-fp", json_) as r:
+        from kcd.adapters import footprint_lib, kipy_pcb, pcb_file
+        cfg = cfg_mod.load()
+        proj = resolve(project)
+        if kipy_pcb.project_is_open(proj.root):
+            if not force:
+                raise CommandError(
+                    "project_open_in_kicad",
+                    "KiCad has this project open; it would overwrite this "
+                    "edit to the .kicad_pcb on its next save. Close the "
+                    "project in KiCad, or pass --force to write anyway.",
+                )
+            r.warn(
+                "Wrote with --force while KiCad has the project open — KiCad "
+                "will overwrite this change on its next save unless it "
+                "reloads the .kicad_pcb file first."
+            )
+        fp = footprint_lib.resolve_footprint(to_footprint, proj)
+        _pre_edit(r, project, f"swap-fp {ref} -> {to_footprint}", no_snapshot)
+        r.data = {
+            "swapped": pcb_file.swap_footprint(
+                proj.pcb, ref, fp["lib_id"], fp["definition"]
+            )
+        }
+        if cfg.auto_render and not no_render:
+            try:
+                svg = cfg.render_cache_dir / f"{proj.name}.svg"
+                kicad_cli.export_pcb_svg(cfg.kicad_cli, proj.pcb, svg)
+                r.add_artifact("pcb_svg", str(svg))
+            except Exception as e:
+                r.warn(f"post-edit render skipped: {e}")
+
+
 # ---------------------------------------------------------------------------
 # PCB edits via kipy IPC
 # ---------------------------------------------------------------------------

@@ -320,6 +320,17 @@ Initial alpha release.
   explicit `--layers` still overrides `--side`. Round-6 field report.
 
 ### Added (continued)
+- `kcd edit swap-fp` — swap a placed PCB footprint for a different library
+  footprint. kipy 0.7.1 cannot swap a footprint definition over IPC (no
+  footprint-library API, immutable definitions), so this is an offline
+  `.kicad_pcb` S-expr edit: it resolves the new footprint via `fp-lib-table`,
+  grafts its geometry / pads / 3D-model onto the placed instance and keeps
+  the instance identity (uuid, path, position, properties) plus every pad's
+  net. The new footprint must declare the same pad numbers as the placed one
+  — a mismatch is a clean `pad_set_mismatch` error. Refuses with
+  `project_open_in_kicad` (KiCad would overwrite the edit on its next save)
+  unless `--force`. Closes the R6 gap where KiCad 10's headless forward
+  annotation couldn't push a footprint change to the board.
 - `kcd drc --since <snapshot>` — DRC delta mode. Runs DRC on a past
   git-backed snapshot as well as the live board and reports only the
   by-(type, severity) violation counts that changed (`data.changed` plus

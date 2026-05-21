@@ -457,6 +457,37 @@ def kcd_edit_designrules(
     return _run(args)
 
 
+@mcp.tool()
+def kcd_edit_swap_fp(
+    project: str,
+    ref: str,
+    to_footprint: str,
+    force: bool = False,
+    no_snapshot: bool = False,
+    no_render: bool = False,
+) -> dict[str, Any]:
+    """Swap a placed PCB footprint for a different library footprint.
+
+    An offline `.kicad_pcb` edit — kipy IPC can't swap a footprint
+    definition. `to_footprint` is a Library:Name id; it must declare the
+    same pad numbers as the placed footprint `ref` (each pad keeps its net).
+    A pad-set mismatch returns `pad_set_mismatch`.
+
+    Refuses with `project_open_in_kicad` when KiCad has the project loaded —
+    it would overwrite the edit on its next save; set `force=True` to write
+    anyway.
+    """
+    args = ["edit", "swap-fp", project, "--ref", ref,
+            "--to-footprint", to_footprint]
+    if force:
+        args.append("--force")
+    if no_snapshot:
+        args.append("--no-snapshot")
+    if no_render:
+        args.append("--no-render")
+    return _run(args)
+
+
 # ---------------------------------------------------------------------------
 # edit (PCB — requires KiCad open via IPC)
 # ---------------------------------------------------------------------------
