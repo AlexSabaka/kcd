@@ -918,16 +918,25 @@ def kcd_render_3d(project: str, out: str, side: str = "top") -> Any:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def kcd_drc(project: str, full: bool = False) -> dict[str, Any]:
+def kcd_drc(
+    project: str, full: bool = False, since: str | None = None
+) -> dict[str, Any]:
     """Run Design Rule Check on the PCB and return a folded report.
 
     Violations are grouped by (type, severity) with a small per-group sample
     inline; set `full=True` to inline every occurrence. The complete report
     is always written to the artifact file regardless.
+
+    Pass `since=<snapshot-ref>` to get a delta instead — DRC is run on that
+    snapshot too and the envelope carries only the by-type violation counts
+    that changed, so you can measure an edit without re-reading the whole
+    report.
     """
     args = ["drc", project]
     if full:
         args.append("--full")
+    if since:
+        args += ["--since", since]
     return _run(args)
 
 

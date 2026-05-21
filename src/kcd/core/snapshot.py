@@ -22,6 +22,9 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -188,6 +191,37 @@ class SnapshotStore:
             "removed": total_removed,
             "files": files,
         }
+
+    @contextmanager
+    def materialize(self, ref: str) -> Iterator[Path]:
+        """Yield a temp dir holding the project's KiCad files as of `ref`.
+
+        Pure read — files are extracted with `git show`, so the working
+        tree is never touched and a past snapshot can be re-checked (e.g.
+        re-run DRC) while the live project is mid-edit. The temp dir and
+        its contents are removed on exit.
+
+        Raises:
+            SnapshotError: `ref` does not resolve to a snapshot commit.
+        """
+        self._ensure_init()
+        try:
+            resolved = self._git(
+                "rev-parse", "--verify", f"{ref}^{{commit}}"
+            ).stdout.strip()
+        except subprocess.CalledProcessError as e:
+            raise SnapshotError(f"snapshot ref {ref!r} not found") from e
+        with tempfile.TemporaryDirectory(prefix="kcd-snap-") as td:
+            tdp = Path(td)
+            for name in (
+                f"{self.project.name}.kicad_pcb",
+                f"{self.project.name}.kicad_pro",
+                f"{self.project.name}.kicad_dru",
+            ):
+                shown = self._git("show", f"{resolved}:{name}", check=False)
+                if shown.returncode == 0:
+                    (tdp / name).write_text(shown.stdout)
+            yield tdp
 
     def _info_for(self, sha: str) -> SnapshotInfo:
         out = self._git(

@@ -164,7 +164,7 @@ kcd edit pcb-text add <proj> --text T --at X,Y [--layer F.SilkS] [--size MM] [--
 kcd edit pcb-text set <proj> --match OLD --to NEW [--json]   # edit existing PCB text (silk revision/board-name)
 
 # Validate
-kcd drc    <proj> [--full] [--json]   # violations folded by (type,severity); --full = every occurrence inline
+kcd drc    <proj> [--full] [--since SNAPSHOT] [--json]   # violations folded by (type,severity); --full = every occurrence inline; --since = only the by-type counts changed vs a snapshot
 kcd erc    <proj> [--full] [--json]
 kcd parity <proj> [--json]                       # schematic ↔ PCB ref drift
 kcd sync   <proj> [--check] [--json]             # export netlist; --check diffs vs live PCB

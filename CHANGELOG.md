@@ -320,6 +320,14 @@ Initial alpha release.
   explicit `--layers` still overrides `--side`. Round-6 field report.
 
 ### Added (continued)
+- `kcd drc --since <snapshot>` — DRC delta mode. Runs DRC on a past
+  git-backed snapshot as well as the live board and reports only the
+  by-(type, severity) violation counts that changed (`data.changed` plus
+  before/after/Δ totals) — so an agent measuring the effect of an edit
+  reads a small delta instead of re-pulling the whole ~190-violation
+  report. The snapshot's `.kicad_pcb` is reached via `git show` without
+  touching the working tree (new `SnapshotStore.materialize`); both full
+  reports are saved as artifacts. Round-6 field report token-saver.
 - `kcd edit pcb-text add|set` — add or edit free text on the PCB over live
   IPC. `add` places a text item (silkscreen by default — `--layer`, `--size`,
   `--thickness`, `--rotation`); `set` replaces an existing item matched by

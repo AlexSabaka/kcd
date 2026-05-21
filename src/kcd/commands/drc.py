@@ -11,6 +11,7 @@ every occurrence.
 from __future__ import annotations
 
 import json
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -19,8 +20,9 @@ import typer
 
 from kcd.adapters import kicad_cli
 from kcd.core import config as cfg_mod
-from kcd.core.output import Result, run_command
-from kcd.core.project import resolve
+from kcd.core.output import CommandError, Result, run_command
+from kcd.core.project import Project, resolve
+from kcd.core.snapshot import SnapshotError, SnapshotStore
 
 # Occurrences shown per (type, severity) group in the inline envelope. Three
 # examples are enough to recognise a uniform violation kind; the artifact
@@ -154,6 +156,87 @@ def _warn(r: Result) -> None:
     r.warn(msg)
 
 
+def _delta(before: list[dict], after: list[dict]) -> dict:
+    """Diff two folded violation lists by (type, severity).
+
+    `before` / `after` are `_fold` output. Returns only the groups whose
+    `count` changed — each as `{type, severity, before, after, delta}` —
+    plus before/after/Δ totals: the small payload an agent reads to see
+    exactly what an edit moved, without re-pulling the whole report.
+    """
+    bmap = {(g["type"], g["severity"]): g["count"] for g in before}
+    amap = {(g["type"], g["severity"]): g["count"] for g in after}
+    changed: list[dict] = []
+    for key in bmap.keys() | amap.keys():
+        b, a = bmap.get(key, 0), amap.get(key, 0)
+        if a != b:
+            changed.append({
+                "type": key[0], "severity": key[1],
+                "before": b, "after": a, "delta": a - b,
+            })
+    changed.sort(
+        key=lambda g: (_SEVERITY_RANK.get(g["severity"], 9), -abs(g["delta"]))
+    )
+    bt, at = sum(bmap.values()), sum(amap.values())
+    return {
+        "summary": {"before": bt, "after": at, "delta": at - bt},
+        "changed": changed,
+    }
+
+
+def _warn_delta(r: Result) -> None:
+    """One-line headline for a `--since` delta run."""
+    s = r.data["summary"]
+    n = len(r.data["changed"])
+    if n == 0:
+        r.warn(
+            f"no DRC change since {r.data['since']} "
+            f"(total still {s['after']})"
+        )
+        return
+    sign = "+" if s["delta"] > 0 else ""
+    r.warn(
+        f"{n} violation type(s) changed since {r.data['since']}: "
+        f"total {s['before']} -> {s['after']} ({sign}{s['delta']})"
+    )
+
+
+def _drc_since(
+    r: Result, proj: Project, cfg: Any, since: str, current: dict
+) -> None:
+    """Run DRC on snapshot `since` and reduce `r.data` to the changed counts.
+
+    `current` is the live board's `_build_report` core. The snapshot's full
+    report is saved as a `drc_report_since` artifact for drill-in.
+    """
+    store = SnapshotStore(proj)
+    try:
+        with store.materialize(since) as old_dir:
+            old_pcb = old_dir / f"{proj.name}.kicad_pcb"
+            if not old_pcb.is_file():
+                raise CommandError(
+                    "not_found",
+                    f"snapshot {since!r} has no PCB file — nothing to diff.",
+                )
+            with tempfile.TemporaryDirectory(prefix="kcd-drc-since-") as td:
+                old_raw = kicad_cli.run_drc(
+                    cfg.kicad_cli, old_pcb, Path(td) / "drc.json"
+                )
+    except SnapshotError as e:
+        raise CommandError("not_found", str(e)) from e
+    old_core, old_full = _build_report(old_raw, full=False, kind="drc")
+    snap_report = cfg.render_cache_dir / f"{proj.name}-drc-since.json"
+    snap_report.parent.mkdir(parents=True, exist_ok=True)
+    snap_report.write_text(json.dumps(old_full, indent=2))
+    r.add_artifact("drc_report_since", str(snap_report))
+    r.data = {
+        "project": proj.name,
+        "since": since,
+        **_delta(old_core["violations"], current["violations"]),
+    }
+    _warn_delta(r)
+
+
 def drc_cmd(
     project: str = typer.Argument(...),
     report: Path = typer.Option(
@@ -162,6 +245,11 @@ def drc_cmd(
     full: bool = typer.Option(
         False, "--full", help="Inline every occurrence, not just a per-type sample"
     ),
+    since: str | None = typer.Option(
+        None, "--since",
+        help="Snapshot ref to diff against — report only the by-type "
+             "violation counts that changed since that snapshot.",
+    ),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Run DRC on the PCB and return a folded, token-efficient report.
@@ -169,6 +257,10 @@ def drc_cmd(
     Violations are grouped by (type, severity); each group shows a sample of
     occurrences inline (all of them with --full). The artifact at the report
     path always holds the complete report, including item uuids.
+
+    With --since <snapshot>, DRC is also run on that snapshot and the
+    envelope carries only the by-type counts that changed — the delta an
+    agent reads to measure an edit without re-pulling the whole report.
     """
     with run_command("drc", json_) as r:
         cfg = cfg_mod.load()
@@ -177,9 +269,12 @@ def drc_cmd(
         raw = kicad_cli.run_drc(cfg.kicad_cli, proj.pcb, report_path)
         core, full_report = _build_report(raw, full=full, kind="drc")
         report_path.write_text(json.dumps(full_report, indent=2))
-        r.data = {"project": proj.name, **core}
         r.add_artifact("drc_report", str(report_path))
-        _warn(r)
+        if since is not None:
+            _drc_since(r, proj, cfg, since, core)
+        else:
+            r.data = {"project": proj.name, **core}
+            _warn(r)
 
 
 def erc_cmd(
