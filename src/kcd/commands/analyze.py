@@ -315,7 +315,9 @@ def _reconcile_connectivity(data: dict, proj: Project, r: Result) -> None:
 
     `connectivity.routing_complete` is computed from net-level routing only —
     it can report True while DRC finds pad-level gaps. Mirror the fab-gate
-    reconciliation on analyze_pcb's own verdict (Round-5 field report R5-3).
+    reconciliation on analyze_pcb's own verdict (Round-5 field report R5-3),
+    and on the sibling `statistics.routing_complete`, which is computed the
+    same net-level way and was left stale (Round-6 field report).
     """
     conn = data.get("connectivity")
     if not isinstance(conn, dict) or conn.get("routing_complete") is not True:
@@ -325,6 +327,9 @@ def _reconcile_connectivity(data: dict, proj: Project, r: Result) -> None:
         return
     conn["routing_complete"] = False
     conn["drc_unconnected"] = unconnected
+    stats = data.get("statistics")
+    if isinstance(stats, dict) and stats.get("routing_complete") is True:
+        stats["routing_complete"] = False
     r.warn(
         f"analyze pcb connectivity downgraded — DRC reports {unconnected} "
         "unconnected pad(s) the net-level routing check missed; "

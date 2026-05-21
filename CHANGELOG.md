@@ -277,6 +277,11 @@ Initial alpha release.
   are bulky by nature regardless of size. `analyze pcb` additionally drops
   `net_name_to_id` (the exact inverse of `nets`) from both the artifact and
   the envelope. Round-6 field report.
+- `kcd analyze pcb` reconciles the `statistics.routing_complete` sibling.
+  The Round-5 R5-3 fix downgraded `connectivity.routing_complete` against
+  DRC but left `statistics.routing_complete` — computed the same net-level
+  way — reading a stale `true` in the same payload. Both are now downgraded
+  together. Round-6 field report.
 
 ### Added (continued)
 - `kcd edit pcb-text add|set` — add or edit free text on the PCB over live

@@ -7,6 +7,7 @@ don't handle. kcd's command layer post-processes / guards the analyzer JSON:
   B6   — thermal_score 100 from zero assessed components
   B7   — MPN coverage blind to the SnapEDA `MP` field
   R5-3 — analyze_pcb connectivity routing_complete vs DRC
+         (+ R6 — its sibling statistics.routing_complete)
   R5-5 — analyze diff crashes on gerber (and other unsupported) JSONs
   R5-6 — analyze_cross 0 findings reads as a clean bill of health
 """
@@ -244,6 +245,26 @@ def test_pcb_connectivity_skips_drc_when_already_incomplete(
     monkeypatch.setattr(kicad_cli, "run_drc", boom)
     out = _invoke(_pcb_app, proj_dir)
     assert out["data"]["connectivity"]["routing_complete"] is False
+
+
+def test_pcb_statistics_routing_complete_reconciled(
+    monkeypatch, proj_dir: Path,
+) -> None:
+    """The sibling `statistics.routing_complete` downgrades alongside
+    `connectivity.routing_complete` — it was left stale (Round-6 field
+    report)."""
+    _stub_analyzer(monkeypatch, {
+        "findings": [],
+        "connectivity": {"routing_complete": True, "unrouted_count": 0},
+        "statistics": {"routing_complete": True, "track_count": 120},
+    })
+    monkeypatch.setattr(
+        kicad_cli, "run_drc",
+        lambda *a, **k: {"unconnected_items": [{"i": 1}]},
+    )
+    out = _invoke(_pcb_app, proj_dir)
+    assert out["data"]["connectivity"]["routing_complete"] is False
+    assert out["data"]["statistics"]["routing_complete"] is False
 
 
 # ---------------------------------------------------------------------------
