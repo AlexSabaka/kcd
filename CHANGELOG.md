@@ -304,6 +304,12 @@ Initial alpha release.
   names the valid pin numbers of both the current and the target symbol
   (with derived-symbol pins resolving from the `extends` fix above). Round-6
   field report.
+- `kcd edit move-fp` refills copper zones after the move. A footprint move
+  left every zone fill computed for the *old* pad positions — a moved pad
+  stranded its copper instead of re-bonding to the pour it now sits over,
+  the dangling-stub friction every placement move generated. `move_footprint`
+  now runs a zone refill before saving (`data.zones_refilled`). Round-6
+  field report.
 
 ### Added (continued)
 - `kcd edit pcb-text add|set` — add or edit free text on the PCB over live

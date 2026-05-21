@@ -478,6 +478,10 @@ def board_bbox() -> dict[str, float]:
 def move_footprint(reference: str, x_mm: float, y_mm: float, rotation_deg: float | None = None) -> dict[str, Any]:
     """Move a footprint to a new position; optionally rotate.
 
+    Refills copper zones after the move so a moved pad re-bonds to (or
+    releases from) the pour it now sits over, instead of stranding the
+    zone fill computed for the old position (`data.zones_refilled`).
+
     Caveat: calls `board.save()` after the move. kipy 0.7.1 has no
     `is_dirty()` / `has_unsaved_changes()` API, so this *will* persist
     whatever in-editor changes the user has alongside the footprint
@@ -500,8 +504,11 @@ def move_footprint(reference: str, x_mm: float, y_mm: float, rotation_deg: float
                 from kipy.geometry import Angle
                 fp.orientation = Angle.from_degrees(rotation_deg)
             board.update_items([fp])
+            board.refill_zones()
             board.save()
-            return _footprint_to_dict(fp)
+            result = _footprint_to_dict(fp)
+            result["zones_refilled"] = True
+            return result
     raise LookupError(f"Footprint {reference!r} not found on board")
 
 

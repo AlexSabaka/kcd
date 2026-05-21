@@ -101,6 +101,37 @@ def test_kipy_angle_import_available() -> None:
     assert Angle.from_degrees(90.0) is not None
 
 
+def test_move_footprint_refills_zones(monkeypatch) -> None:
+    """`move_footprint` refills copper zones so a moved pad re-bonds to the
+    pour it now sits over instead of stranding the old fill (Round-6)."""
+    calls: list[str] = []
+    fp = SimpleNamespace(
+        reference_field=SimpleNamespace(text=SimpleNamespace(value="R5")),
+    )
+
+    class FakeBoard:
+        def get_footprints(self):
+            return [fp]
+
+        def update_items(self, items):
+            calls.append("update_items")
+
+        def refill_zones(self):
+            calls.append("refill_zones")
+
+        def save(self):
+            calls.append("save")
+
+    monkeypatch.setattr(kipy_pcb, "get_board", lambda: FakeBoard())
+    monkeypatch.setattr(
+        kipy_pcb, "_footprint_to_dict", lambda fp: {"reference": "R5"}
+    )
+    result = kipy_pcb.move_footprint("R5", 10.0, 20.0)
+    assert result["zones_refilled"] is True
+    # the refill runs after the move is applied and before the save
+    assert calls == ["update_items", "refill_zones", "save"]
+
+
 # ---------------------------------------------------------------------------
 # _footprint_to_dict — library id read (Round-2 field report bug #2)
 # ---------------------------------------------------------------------------
