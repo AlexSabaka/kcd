@@ -19,6 +19,10 @@ class Config:
     """Directory holding KiCad's standard `.kicad_sym` symbol libraries, or
     None if it couldn't be located. Override with `KCD_SYMBOL_DIR`."""
 
+    footprint_dir: Path | None
+    """Directory holding KiCad's standard `.pretty` footprint libraries, or
+    None if it couldn't be located. Override with `KCD_FOOTPRINT_DIR`."""
+
     freerouting_jar: str | None
     """Path to FreeRouting JAR (optional, needed only for autorouting)."""
 
@@ -49,6 +53,8 @@ def load() -> Config:
         KCD_KICAD_CLI       — path to `kicad-cli`, default: search PATH
         KCD_SYMBOL_DIR      — KiCad standard symbol-library dir, default:
                               auto-detect from platform install locations
+        KCD_FOOTPRINT_DIR   — KiCad standard footprint-library dir, default:
+                              auto-detect from platform install locations
         KCD_FREEROUTING_JAR — path to FreeRouting JAR
         KCD_SNAPSHOT_DIR    — snapshot subdir name, default: `.kcd`
         KCD_AUTO_SNAPSHOT   — `0` to disable, default enabled
@@ -57,7 +63,8 @@ def load() -> Config:
         KCD_KICAD_CLI_TIMEOUT — subprocess timeout in seconds, default `60`
     """
     kicad_cli = os.environ.get("KCD_KICAD_CLI") or shutil.which("kicad-cli") or "kicad-cli"
-    symbol_dir = _find_symbol_dir()
+    symbol_dir = _find_kicad_share_dir("KCD_SYMBOL_DIR", "symbols")
+    footprint_dir = _find_kicad_share_dir("KCD_FOOTPRINT_DIR", "footprints")
     freerouting = os.environ.get("KCD_FREEROUTING_JAR")
     snapshot_dir = os.environ.get("KCD_SNAPSHOT_DIR", ".kcd")
     auto_snap = os.environ.get("KCD_AUTO_SNAPSHOT", "1") != "0"
@@ -68,6 +75,7 @@ def load() -> Config:
     return Config(
         kicad_cli=kicad_cli,
         symbol_dir=symbol_dir,
+        footprint_dir=footprint_dir,
         freerouting_jar=freerouting,
         snapshot_dir_name=snapshot_dir,
         auto_snapshot=auto_snap,
@@ -77,26 +85,28 @@ def load() -> Config:
     )
 
 
-def _find_symbol_dir() -> Path | None:
-    """Locate KiCad's standard symbol-library directory.
+def _find_kicad_share_dir(env_var: str, leaf: str) -> Path | None:
+    """Locate one of KiCad's standard SharedSupport library directories.
 
-    `KCD_SYMBOL_DIR` wins if set (returned as-is — trust the override). Else
-    probe the known per-platform install locations and return the first that
-    exists. `kicad-cli` can't be used to derive this — it's often a separate
-    install (e.g. Homebrew) from the GUI app that ships the symbols.
+    `env_var` (`KCD_SYMBOL_DIR` / `KCD_FOOTPRINT_DIR`) wins if set — returned
+    as-is, trusting the override. Else probe the known per-platform install
+    locations for a `.../<leaf>` directory (`leaf` is `symbols` or
+    `footprints`) and return the first that exists. `kicad-cli` can't derive
+    this — it's often a separate install (e.g. Homebrew) from the GUI app
+    that ships the libraries.
     """
-    env = os.environ.get("KCD_SYMBOL_DIR")
+    env = os.environ.get(env_var)
     if env:
         return Path(env)
     candidates = [
-        Path("/Applications/KiCad/KiCad.app/Contents/SharedSupport/symbols"),
-        Path("/usr/share/kicad/symbols"),
-        Path("/usr/local/share/kicad/symbols"),
+        Path(f"/Applications/KiCad/KiCad.app/Contents/SharedSupport/{leaf}"),
+        Path(f"/usr/share/kicad/{leaf}"),
+        Path(f"/usr/local/share/kicad/{leaf}"),
     ]
     for base in (Path("C:/Program Files/KiCad"), Path("C:/Program Files (x86)/KiCad")):
         if base.is_dir():
             candidates.extend(
-                ver / "share" / "kicad" / "symbols"
+                ver / "share" / "kicad" / leaf
                 for ver in sorted(base.iterdir(), reverse=True)
             )
     for c in candidates:
