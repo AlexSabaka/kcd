@@ -282,6 +282,15 @@ Initial alpha release.
   DRC but left `statistics.routing_complete` — computed the same net-level
   way — reading a stale `true` in the same payload. Both are now downgraded
   together. Round-6 field report.
+- `kcd lib show` resolves the pins of `extends`-derived symbols. KiCad
+  symbol libraries express every regulator / MCU variant as a symbol that
+  `extends` a base — the variant node carries only property overrides, while
+  the pins and graphics live in the base. `find_symbol` read only the
+  variant's own (empty) unit sub-symbols, so every derived symbol came back
+  with `pins: []` — which also left `edit symbol` unable to target one. The
+  `extends` chain is now followed within the library file: pins resolve from
+  the base, properties merge base-then-override (the variant's own values
+  win). Round-6 field report.
 
 ### Added (continued)
 - `kcd edit pcb-text add|set` — add or edit free text on the PCB over live

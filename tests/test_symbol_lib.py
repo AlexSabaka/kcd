@@ -64,6 +64,30 @@ def test_find_symbol_via_symbol_dir(monkeypatch) -> None:
     assert info["source_file"].endswith("mylib.kicad_sym")
 
 
+def test_find_symbol_resolves_extends_pins(proj) -> None:
+    """A derived symbol inherits its pins from the base it extends — the
+    field-report case that returned `pins: []` for every regulator variant
+    (Round-6)."""
+    info = symbol_lib.find_symbol("MyLib:AP2112K-3.3", proj)
+    assert [p["number"] for p in info["pins"]] == ["1", "2", "3", "5"]
+    assert [p["name"] for p in info["pins"]] == ["VIN", "GND", "EN", "VOUT"]
+
+
+def test_find_symbol_extends_merges_properties(proj) -> None:
+    """Derived-symbol properties override the base; un-overridden base
+    properties are inherited."""
+    info = symbol_lib.find_symbol("MyLib:AP2112K-3.3", proj)
+    assert info["properties"]["Value"] == "AP2112K-3.3"   # overridden
+    assert info["properties"]["Reference"] == "U"         # inherited from base
+    assert "3v3" in info["properties"]["Datasheet"]       # overridden
+
+
+def test_find_symbol_base_of_extends_chain_still_works(proj) -> None:
+    """The base symbol of an extends chain resolves its own pins directly."""
+    info = symbol_lib.find_symbol("MyLib:AP2112K-1.8", proj)
+    assert [p["number"] for p in info["pins"]] == ["1", "2", "3", "5"]
+
+
 def test_find_symbol_invalid_lib_id(proj) -> None:
     with pytest.raises(CommandError) as exc:
         symbol_lib.find_symbol("NoColonHere", proj)

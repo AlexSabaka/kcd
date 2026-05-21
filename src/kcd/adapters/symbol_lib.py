@@ -64,6 +64,10 @@ def find_symbol(lib_id: str, proj: Project | None = None) -> dict[str, Any]:
     definition}`` — `definition` is the parsed S-expr subtree Waves 4-5 splice
     into a project's `lib_symbols`.
 
+    A KiCad `extends`-derived symbol (every regulator/MCU variant) holds its
+    pins only in the base symbol it extends; `pins`/`properties` are resolved
+    by following the `extends` chain within the library file.
+
     Raises:
         CommandError(code="invalid_lib_id"): `lib_id` isn't `Library:Symbol`.
         FileNotFoundError: the library file can't be located.
@@ -77,25 +81,27 @@ def find_symbol(lib_id: str, proj: Project | None = None) -> dict[str, Any]:
     nickname, name = lib_id.split(":")
     lib_file = resolve_lib_file(nickname, proj)
     tree = sexp.parse(lib_file.read_text())
-    for node in tree:
-        if (
-            isinstance(node, list)
-            and len(node) >= 2
-            and node[0] == "symbol"
-            and node[1] == name
-        ):
-            return {
-                "lib_id": lib_id,
-                "library": nickname,
-                "name": name,
-                "source_file": str(lib_file),
-                "pins": _extract_pins(node),
-                "properties": _extract_properties(node),
-                "definition": node,
-            }
-    raise LookupError(
-        f"Symbol {name!r} not found in library {nickname!r} ({lib_file})."
-    )
+    symbols = {
+        node[1]: node
+        for node in tree
+        if isinstance(node, list) and len(node) >= 2
+        and node[0] == "symbol" and isinstance(node[1], str)
+    }
+    node = symbols.get(name)
+    if node is None:
+        raise LookupError(
+            f"Symbol {name!r} not found in library {nickname!r} ({lib_file})."
+        )
+    pins, properties = _resolve_symbol(node, symbols)
+    return {
+        "lib_id": lib_id,
+        "library": nickname,
+        "name": name,
+        "source_file": str(lib_file),
+        "pins": pins,
+        "properties": properties,
+        "definition": node,
+    }
 
 
 def list_libraries(proj: Project | None = None) -> list[dict[str, str]]:
@@ -211,11 +217,47 @@ def _extract_properties(symbol_node: list) -> dict[str, str]:
     return props
 
 
+_MAX_EXTENDS_DEPTH = 16
+
+
+def _extends_target(symbol_node: list) -> str | None:
+    """The parent symbol name from an `(extends "Name")` child, or None."""
+    for child in symbol_node:
+        if isinstance(child, list) and len(child) >= 2 and child[0] == "extends":
+            return str(child[1])
+    return None
+
+
+def _resolve_symbol(
+    symbol_node: list,
+    symbols: dict[str, list],
+    _depth: int = 0,
+) -> tuple[list[dict[str, str]], dict[str, str]]:
+    """Pins + properties of a symbol, following `extends` to its base.
+
+    A KiCad `extends`-derived symbol holds its pins and graphics only in the
+    base symbol it extends — the derived node carries property overrides.
+    Pins resolve from the base; properties merge base-then-override so the
+    variant's own values win. The depth guard breaks any `extends` cycle.
+    """
+    own_pins = _extract_pins(symbol_node)
+    own_props = _extract_properties(symbol_node)
+    parent_name = _extends_target(symbol_node)
+    if parent_name is None or _depth >= _MAX_EXTENDS_DEPTH:
+        return own_pins, own_props
+    parent = symbols.get(parent_name)
+    if parent is None:
+        return own_pins, own_props
+    parent_pins, parent_props = _resolve_symbol(parent, symbols, _depth + 1)
+    return own_pins or parent_pins, {**parent_props, **own_props}
+
+
 def _extract_pins(symbol_node: list) -> list[dict[str, str]]:
     """Pins of a `.kicad_sym` symbol.
 
     A symbol's pins live inside its nested unit sub-symbols
     (`(symbol "R_1_1" (pin ...))`), not directly under the top symbol.
+    An `extends`-derived symbol has none of its own — see `_resolve_symbol`.
     """
     pins: list[dict[str, str]] = []
     for child in symbol_node:
