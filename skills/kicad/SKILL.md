@@ -270,7 +270,11 @@ kcd analyze cross <project> --json
 
 Runs the schematic and PCB analyzers internally, then cross-checks them.
 Checks: CC-001 connector current capacity, EG-001 ESD protection gaps,
-DA-001 decoupling adequacy, XV-001..003 schematic/PCB sync.
+DA-001 decoupling adequacy, XV-001..003 schematic/PCB sync. The checks
+need load-current / datasheet inputs — when those are absent the run
+returns fast with `summary.assessment_status: insufficient_data` (a
+0-finding cross run is unevaluated, not a clean board), and it errors
+`not_found` if either the `.kicad_sch` or `.kicad_pcb` is missing.
 
 ### Connectivity Graph (--full mode)
 

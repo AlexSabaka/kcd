@@ -519,6 +519,11 @@ def analyze_cross_cmd(
     Runs the schematic and PCB analyzers, then cross-checks the two —
     connector current, ESD gaps, decoupling adequacy, schematic/PCB
     consistency. Read-only; needs both .kicad_sch and .kicad_pcb present.
+
+    A run that surfaces 0 findings returns fast with
+    `summary.assessment_status: insufficient_data` — the cross-checks need
+    load-current / datasheet inputs, so an empty result is unevaluated,
+    not a clean bill of health.
     """
     with run_command("analyze.cross", json_) as r:
         proj = resolve(project)
